@@ -36,14 +36,13 @@ struct NoteState {
     const char *status;
 };
 
-// A small framebuffer keeps this app independent of the main UI's display
-// buffer, which SystemUISuspend() releases while another app is running.
+// Borrow the main UI's framebuffer while its task is suspended. The loader
+// queues draw operations and may still read this memory after flush returns.
 class NoteDisplay {
     uint8_t *pixels;
 
 public:
-    NoteDisplay() : pixels((uint8_t *)pvPortMalloc(LCD_PIX_W * LCD_PIX_H)) {}
-    ~NoteDisplay() { if (pixels) vPortFree(pixels); }
+    explicit NoteDisplay(uint8_t *buffer) : pixels(buffer) {}
     bool ready() const { return pixels != NULL; }
 
     void clear(uint8_t color) {
@@ -424,9 +423,9 @@ bool handleKey(NoteState &note, uint16_t key) {
 }
 
 void notesTask(void *) {
-    SystemUISuspend();
+    uint8_t *frameBuffer = SystemUIBorrowFrameBuffer();
     {
-        NoteDisplay display;
+        NoteDisplay display(frameBuffer);
         if (!display.ready()) {
             printf("Notes: no display memory\n");
             SystemUIResume();
@@ -474,7 +473,7 @@ void notesTask(void *) {
 } // namespace
 
 extern "C" void Notes_Start(void) {
-    if (xTaskCreate(notesTask, "Notes", 1024, NULL,
+    if (xTaskCreate(notesTask, "Notes", 2048, NULL,
                     configMAX_PRIORITIES - 3, NULL) != pdPASS) {
         printf("Notes: failed to create task\n");
     }

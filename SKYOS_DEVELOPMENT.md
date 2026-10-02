@@ -66,5 +66,12 @@ SkyOS 的 50×25 衬线体开机位图及生成脚本已放入 `OSLoader/Include
 ## SkyOS Notes 开发记录（2026-10-02）
 
 - 在本地分支 `skyos/notes-app` 增加应用注册表与短便笺应用。应用支持键盘输入、光标移动、保存、退出后重新读取，使用内部 FAT 存储中的 `SKYNOTE.TXT` 与 `SKYNOTE.BAK`。超长或非 ASCII 文件只读显示，避免覆盖外部编辑的数据。
-- GNU Arm Embedded Toolchain 10.3-2021.10 构建通过。最新候选 `build/System/ExistOS.sys` 为 5,281,332 字节，SHA-256 为 `86923137FAC77F00D2B09F783D58A5D2D7E25BAE3DCBA27053F09607F25B4E0B`。OSLoader 没有改动。
-- 曾将上一候选系统镜像（5,281,292 字节，SHA-256 `9CB072C4DA7D4550110A64C6376A162F1D6DBF2F15DB946ADE355B8766C1D6D2`）通过 EDB 写入系统起始页 1984；工具返回 0，设备重新枚举为 ExistOS USB 复合设备。屏幕启动和 Notes 保存读取仍待实机确认，最新候选尚未刷入。
+- GNU Arm Embedded Toolchain 10.3-2021.10 构建通过。当时的第二候选系统镜像为 5,281,332 字节，SHA-256 为 `86923137FAC77F00D2B09F783D58A5D2D7E25BAE3DCBA27053F09607F25B4E0B`，未刷入。OSLoader 没有改动。
+- 曾将第一候选系统镜像（5,281,292 字节，SHA-256 `9CB072C4DA7D4550110A64C6376A162F1D6DBF2F15DB946ADE355B8766C1D6D2`）通过 EDB 写入系统起始页 1984；工具返回 0，设备重新枚举为 ExistOS USB 复合设备。实机可进入 Notes，但用户报告输入文字并保存后，退出时出现 System Panic。
+
+## Notes 退出崩溃排查（2026-10-02）
+
+- 用户照片显示 Loader 的 `System Panic!`，`FAR=0000000c`，寄存器画面中 `R15=004b30c4`。该地址落在本次构建的 newlib `_free_r` 内；Loader 在 `OSLoader/start.c` 显示的是 `pSysTask` 保存的寄存器，未必是发生访问异常的任务现场。因此目前能确认有非法内存访问及释放路径活动，不能仅凭照片断定具体是哪一次 `free` 损坏了堆。
+- Notes 原来在启动时释放主 UI 的 32,512 字节缓冲区，另行分配自己的缓冲区；退出时释放自己的缓冲区，再恢复主 UI 的缓冲区。Loader 的显示调用会异步排队读取传入的缓冲区，这样的生命周期存在悬空引用风险。修复候选改为暂停主 UI 任务并借用其现有缓冲区，退出后直接恢复 UI 任务，同时把 Notes 任务栈从 1,024 个 word 增至 2,048 个 word。
+- 新候选 `build/System/ExistOS.sys` 为 5,281,316 字节，SHA-256 `3040BB49FB2F2D815C35360709E1AE89437AFF109FBB4D4B655402D1096DFFC6`。GNU Arm 10.3 + Ninja 本机构建成功；EDB 对系统起始页 1984 的写入返回 0，USB 恢复接口在刷写前在线。仍需用户在实机重复输入、F2 保存、F6 退出、再进入 Notes 的流程。EDB 尚无 NAND 读回校验。
+- 另发现 Loader `OSLoader/drivers/display/display_up.c` 的 `DisplayFlushArea(..., false)` 原来仍把指向局部 `fin` 的指针放入异步队列，显示任务稍后写回该指针。源码已改为仅阻塞调用传入完成指针，且 Loader 单独构建成功；**此 Loader 修复尚未刷入设备**，本次实机测试仍使用原 Loader。

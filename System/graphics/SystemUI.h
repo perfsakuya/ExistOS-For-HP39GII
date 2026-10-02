@@ -1,4 +1,5 @@
 #pragma once
+#include <stdint.h>
 //#include "lvgl.h"
 
 #define LCD_PIX_W   256
@@ -21,6 +22,7 @@ extern "C" {
 void SystemUIRefresh() ;
 void SystemUISuspend();
 void SystemUIResume();
+uint8_t *SystemUIBorrowFrameBuffer();
 
 void UI_Task(void *_);
 

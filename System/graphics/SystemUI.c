@@ -301,6 +301,7 @@ void SystemUIInit() {
 
 void UI_Resume();
 void UI_Suspend();
+uint8_t *UI_GetSharedFrameBuffer();
 
 extern bool UIForceRefresh ;
 //void keyMsg(uint32_t key, int state);
@@ -315,6 +316,14 @@ void SystemUISuspend() {
     vTaskSuspend(pUITask);
     UI_Suspend();
 
+}
+
+uint8_t *SystemUIBorrowFrameBuffer() {
+    // Notes keeps the UI task stopped but draws into its existing buffer.
+    // The loader consumes display buffers asynchronously, so it must stay
+    // allocated until those queued draws have finished.
+    vTaskSuspend(pUITask);
+    return UI_GetSharedFrameBuffer();
 }
 
 void SystemUIResume() {

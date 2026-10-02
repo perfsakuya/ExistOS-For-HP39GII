@@ -339,6 +339,10 @@ void UI_Refrush() {
     drawPage(curPage);
 }
 
+uint8_t *UI_GetSharedFrameBuffer() {
+    return uidisp ? uidisp->frameBuffer() : NULL;
+}
+
 void UI_Suspend() {
     uidisp->releaseBuffer();
 }

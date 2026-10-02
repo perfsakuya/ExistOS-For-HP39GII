@@ -29,6 +29,8 @@ private:
     }
 
 public:
+    uint8_t *frameBuffer() const { return disp_buf; }
+
     UI_Display(int display_width, int display_height, void (*drawf)(uint8_t *buf, uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1)) {
         printf("Create UI Display.\n");
         this->disp_buf = (uint8_t *)pvPortMalloc(display_width * display_height);

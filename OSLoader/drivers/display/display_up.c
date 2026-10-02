@@ -79,7 +79,9 @@ void DisplayFlushArea(uint32_t x_start, uint32_t y_start, uint32_t x_end, uint32
     pars[2] = x_end;
     pars[3] = y_end;
     pars[4] = (uint32_t)buf;
-    pars[5] = (uint32_t)&fin;
+    // A non-blocking request outlives this stack frame. Only synchronous
+    // callers need the completion flag.
+    pars[5] = block ? (uint32_t)&fin : 0;
 
     opa.opa = DISPOPA_FLUSH_AREA;
     opa.parNum = 6;
@@ -353,7 +355,9 @@ void DisplayTask() {
                 portDispFlushAreaBuf(x_start, y_start, x_end, y_end, buf);
 
                 bool *fin = (bool *)curOpa.pars[5];
-                *fin = true;
+                if (fin) {
+                    *fin = true;
+                }
 
                 vPortFree(curOpa.pars);
             }
