@@ -38,6 +38,43 @@ masked sprite passes. Each counter covers 16 rendered views.
 The SkyOS automap uses a light background and dark line palette for the
 monochrome LCD.
 
+## Hybrid gameplay prototype
+
+`Hybrid` is an experimental sixth application that runs the same E1M1 WAD and
+GBADoom 35 Hz game simulation as `E1M1`, including collision, special lines,
+monsters, weapons, items, and the level exit. It replaces the expensive BSP
+view draw with Lite's 256 × 127 grayscale ray caster, using the original
+player's position and angle. F1 fires, F2 uses, F3/F4 strafe, F5 toggles the
+map, and F6/ON exits. Enter is disabled because the original menu cannot yet
+be drawn on the grayscale frame. The small top strip shows health, kills and
+the blue key. The static Lite grid does **not** yet show dynamic doors, monsters
+or item sprites. Full gameplay cannot be considered visually complete until
+those objects and a clear level-complete screen are added.
+
+This prototype passed offline build and ray/render guard checks and was flashed
+for one hardware performance run. It keeps the original 28.8 KiB game and LCD
+buffers because the engine still initializes its own backbuffer at startup.
+It also inherits the unresolved full-engine F6 exit freeze; the user manually
+restarted after profiling and confirmed the application list was responsive.
+The hybrid is a measurement tool, not the intended final playable app.
+
+Four 32-frame batches totaled 128 frames and averaged 2.67 fps, with 43.5–48.4
+ms rendering and 12.0–12.4 ms LCD submission per frame. Stable `G_Ticker`
+batches took about 69–91 ms per tic; the first batch included a 3.696-second
+level-load tic. The longest measured frame interval was 509 ms. These are
+mixed stationary/movement measurements, not a full level playthrough. The
+swap-backed full game logic, rather than the Lite renderer, is now the main
+obstacle to 10 fps. The next implementation path is a compact E1M1-specific
+simulation driven by the embedded WAD's things and special lines, keeping the
+Lite visual path and adding dynamic doors, combat, pickups and the exit.
+
+The serial log separates costs: `DOOM_TIC` prints total and maximum `G_Ticker`
+time across 35 tics; `DOOM_PHASE` prints per-16-frame totals and worst-case
+logic/draw durations; `DOOM_FAST` prints elapsed time, rendering, LCD queue
+time and their maxima for every 32 fast frames, together with health, kills,
+blue key and map state. These counters should be compared against the raw
+capture file, not inferred from a static Lite run.
+
 `Flat` is a profiling variant of the same E1M1 spawn. It keeps BSP
 traversal, wall geometry, clipping, lighting, floors, and sprites but fills
 walls with one lit palette color per texture ID. It skips wall texture cache

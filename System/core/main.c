@@ -81,10 +81,10 @@ void printTaskList() {
 
 void vTask1(void *par1) {
     extern volatile int SkyOS_DoomLiteRunning;
+    extern volatile int SkyOS_DoomFastRunning;
     while (1) {
-        /* The long task-list dump stalls a fast LCD frame. The Lite app
-         * emits its own frame and timing counters while it is active. */
-        if (!SkyOS_DoomLiteRunning) printTaskList();
+        /* Both fast Doom modes emit frame and timing counters themselves. */
+        if (!SkyOS_DoomLiteRunning && !SkyOS_DoomFastRunning) printTaskList();
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }

@@ -38,8 +38,14 @@
   <div class="metric"><div class="label">平均每帧耗时</div><div class="value" id="frametime">—</div></div>
   <div class="metric"><div class="label">E1M1 Lite 帧率</div><div class="value" id="litefps">—</div></div>
   <div class="metric"><div class="label">Lite 最长帧间隔</div><div class="value" id="litemax">—</div></div>
+  <div class="metric"><div class="label">E1M1 混合版帧率</div><div class="value" id="fastfps">—</div></div>
+  <div class="metric"><div class="label">混合版帧间隔 均 / 峰</div><div class="value" id="fastframe">—</div></div>
+  <div class="metric"><div class="label">混合版渲染 均 / 峰</div><div class="value" id="fastrender">—</div></div>
+  <div class="metric"><div class="label">LCD 提交 均 / 峰</div><div class="value" id="fastpresent">—</div></div>
+  <div class="metric"><div class="label">游戏逻辑单 tic 均 / 峰</div><div class="value" id="fasttic">—</div></div>
 </div>
 <div class="events"><span id="literender">Lite 绘制 —</span><span id="litequeue">Lite 显示提交 —</span><span id="litemap">Lite 地图 —</span></div>
+<div class="events"><span id="fastgame">混合版状态 —</span></div>
 <div class="events"><span id="logic">游戏逻辑 —</span><span id="draw">绘制含显示 —</span><span id="convert">灰度转换 —</span><span id="display">显示提交 —</span><span id="other">引擎及其他 —</span></div>
 <div class="events"><span id="setup">视角准备 —</span><span id="bsp">墙面/BSP —</span><span id="planes">地板/天花板 —</span><span id="masked">精灵/遮挡 —</span></div>
 <div class="events" aria-live="polite"><span id="stage">等待启动</span><span id="starts">启动 0</span><span id="zone">交换区校验 0</span><span id="frames">最新帧 0</span><span id="exits">退出 0</span><span id="errors">错误 0</span><span id="panics">Panic 0</span></div>
@@ -69,11 +75,19 @@ async function refresh() {
     byId('frametime').textContent = s.performance ? `${s.performance.total_ms} ms` : '—';
     byId('litefps').textContent = s.lite ? `${s.lite.fps} fps` : '—';
     byId('litemax').textContent = s.lite ? `${s.lite.max_interval_ms} ms` : '—';
+    byId('fastfps').textContent = s.fast ? `${s.fast.fps} fps` : '—';
+    byId('fastframe').textContent = s.fast ? `${s.fast.frame_ms} / ${s.fast.max_interval_ms ?? '—'} ms` : '—';
+    byId('fastrender').textContent = s.fast ? `${s.fast.render_ms} / ${s.fast.max_render_ms ?? '—'} ms` : '—';
+    byId('fastpresent').textContent = s.fast ? `${s.fast.present_ms} / ${s.fast.max_present_ms ?? '—'} ms` : '—';
+    byId('fasttic').textContent = s.tic ? `${s.tic.average_ms} / ${s.tic.max_ms} ms` : '—';
+    byId('fastgame').textContent = s.fast
+      ? `混合版 HP ${s.fast.health ?? '—'} · 击杀 ${s.fast.kills ?? '—'} · 蓝钥匙 ${s.fast.blue_key == null ? '—' : s.fast.blue_key ? '有' : '无'} · 地图 ${s.fast.map == null ? '—' : s.fast.map ? '开' : '关'}`
+      : '混合版状态 —';
     byId('literender').textContent = `Lite 绘制 ${s.lite?.render_ms ?? '—'} ms/帧`;
     byId('litequeue').textContent = `Lite 显示提交 ${s.lite?.queue_ms ?? '—'} ms/帧`;
     byId('litemap').textContent = `Lite 地图 ${s.lite ? (s.lite.map ? '开' : '关') : '—'}`;
-    byId('logic').textContent = `游戏逻辑 ${s.phases?.logic_ms ?? '—'} ms`;
-    byId('draw').textContent = `绘制含显示 ${s.phases?.draw_ms ?? '—'} ms`;
+    byId('logic').textContent = `游戏逻辑 均 ${s.phases?.logic_ms ?? '—'} / 峰 ${s.phases?.logic_max_ms ?? '—'} ms`;
+    byId('draw').textContent = `绘制含显示 均 ${s.phases?.draw_ms ?? '—'} / 峰 ${s.phases?.draw_max_ms ?? '—'} ms`;
     byId('convert').textContent = `灰度转换 ${s.performance?.convert_ms ?? '—'} ms`;
     byId('display').textContent = `显示提交 ${s.performance?.display_ms ?? '—'} ms`;
     byId('other').textContent = `引擎及其他 ${s.performance?.other_ms ?? '—'} ms`;

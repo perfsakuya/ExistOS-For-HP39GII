@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
             }
             memset(frame, 0xa5, sizeof(frame));
             for (unsigned facing = 0; facing < 256u; facing += 32u) {
-                draw_scene(frame + 8u, x, y, (uint8_t)facing);
+                DoomLite_RenderFrame(frame + 8u, x, y, (uint8_t)facing, 0);
                 for (unsigned i = 0; i < 8u; ++i) {
                     if (frame[i] != 0xa5 ||
                         frame[sizeof(frame) - 1u - i] != 0xa5) {
@@ -80,6 +80,15 @@ int main(int argc, char **argv) {
                                 gx, gy, facing);
                         return 5;
                     }
+                }
+            }
+            DoomLite_RenderFrame(frame + 8u, x, y, 0, 1);
+            for (unsigned i = 0; i < 8u; ++i) {
+                if (frame[i] != 0xa5 ||
+                    frame[sizeof(frame) - 1u - i] != 0xa5) {
+                    fprintf(stderr, "map frame guard changed at (%d,%d)\n",
+                            gx, gy);
+                    return 10;
                 }
             }
             ++points;
@@ -90,8 +99,8 @@ int main(int argc, char **argv) {
            rays, points * 8u, points, worst_late_q8);
     if (argc > 1) {
         const unsigned facing = argc > 2 ? (unsigned)strtoul(argv[2], NULL, 0) : 0u;
-        draw_scene(frame + 8u, E1M1_START_X * 256, E1M1_START_Y * 256,
-                   (uint8_t)facing);
+        DoomLite_RenderFrame(frame + 8u, E1M1_START_X * 256,
+                             E1M1_START_Y * 256, (uint8_t)facing, 0);
         FILE *preview = fopen(argv[1], "wb");
         if (!preview) return 6;
         fprintf(preview, "P5\n%d %d\n255\n", LITE_W, LITE_H);

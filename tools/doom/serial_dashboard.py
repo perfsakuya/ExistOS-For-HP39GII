@@ -21,7 +21,7 @@ PERF_RE = re.compile(
     r"DOOM_PERF frames=(\d+) wall_ms=(\d+) convert_ms=(\d+) "
     r"display_ms=(\d+) other_ms=(\d+)"
 )
-PHASE_RE = re.compile(r"DOOM_PHASE frames=(\d+) logic_ms=(\d+) draw_ms=(\d+)")
+PHASE_LINE_RE = re.compile(r"(?m)^DOOM_PHASE\b[^\r\n]*")
 RENDER_RE = re.compile(
     r"DOOM_RENDER frames=(\d+) setup_ms=(\d+) bsp_ms=(\d+) "
     r"planes_ms=(\d+) masked_ms=(\d+)"
@@ -30,11 +30,39 @@ LITE_RE = re.compile(
     r"DOOMLITE_PERF frames=(\d+) elapsed_ms=(\d+) render_ms=(\d+) "
     r"queue_ms=(\d+) max_interval_ms=(\d+) map=(\d+)"
 )
+FIELD_RE = re.compile(r"([a-z_]+)=(-?\d+)")
+MODE_RE = re.compile(r"(?m)^DOOM_MODE\b[^\r\n]*")
+FAST_RE = re.compile(r"(?m)^DOOM_FAST\b[^\r\n]*")
+TIC_RE = re.compile(r"(?m)^DOOM_TIC\b[^\r\n]*")
 DIAG_HEARTBEAT_RE = re.compile(
     r"DOOM_DIAG_HEARTBEAT seconds=(\d+) key=([0-9a-fA-F]+) "
     r"allocated=(\d+) critical=(\d+)"
 )
 DIAG_STAGE_RE = re.compile(r"DOOM_DIAG_STAGE ([^\r\n]+)")
+
+
+def fields(line):
+    return {key: int(value) for key, value in FIELD_RE.findall(line)}
+
+
+def latest_fields(pattern, raw):
+    matches = pattern.findall(raw)
+    return fields(matches[-1]) if matches else None
+
+
+def mode_for_start(raw, start):
+    """The firmware prints DOOM_MODE before DOOM_START.
+
+    Also accept a mode line after DOOM_START for future firmware revisions.
+    Do not inherit a previous run's mode when a new start has no mode line.
+    """
+    run_mode = latest_fields(MODE_RE, raw[start:])
+    if run_mode is not None:
+        return run_mode
+    previous_start = raw.rfind("DOOM_START", 0, start)
+    previous_exit = raw.rfind("DOOM_EXIT", 0, start)
+    boundary = max(previous_start, previous_exit)
+    return latest_fields(MODE_RE, raw[boundary + 1:start]) or {}
 
 
 def current_log():
@@ -52,22 +80,33 @@ def state():
     lines = raw.splitlines()
     mem = [(int(a), int(b)) for a, b in MEM_RE.findall(raw)]
     zram = [(int(a), int(b)) for a, b in ZRAM_RE.findall(raw)]
-    errors = ERROR_RE.findall(raw)
     last_start = raw.rfind("DOOM_START")
-    frames = FRAME_RE.findall(raw[last_start:] if last_start >= 0 else "")
-    perf = PERF_RE.findall(raw[last_start:] if last_start >= 0 else "")
-    last_perf = [int(value) for value in perf[-1]] if perf else None
-    phases = PHASE_RE.findall(raw[last_start:] if last_start >= 0 else "")
-    last_phase = [int(value) for value in phases[-1]] if phases else None
-    renders = RENDER_RE.findall(raw[last_start:] if last_start >= 0 else "")
-    last_render = [int(value) for value in renders[-1]] if renders else None
-    lite_batches = LITE_RE.findall(raw)
-    last_lite = [int(value) for value in lite_batches[-1]] if lite_batches else None
     last_lite_perf = raw.rfind("DOOMLITE_PERF")
     last_lite_exit = raw.rfind("DOOMLITE_EXIT")
-    diagnostic_heartbeats = DIAG_HEARTBEAT_RE.findall(raw)
+    if last_start > max(last_lite_perf, last_lite_exit):
+        mode = "full"
+    elif last_lite_perf > last_lite_exit:
+        mode = "lite_running"
+    elif last_lite_exit >= 0 and last_lite_exit > last_start:
+        mode = "lite_exited"
+    else:
+        mode = "idle"
+    run = raw[last_start:] if mode == "full" else ""
+    fast_mode = mode == "full" and mode_for_start(raw, last_start).get("fast") == 1
+    errors = ERROR_RE.findall(run if mode == "full" else raw)
+    frames = FRAME_RE.findall(run)
+    perf = PERF_RE.findall(run) if not fast_mode else []
+    last_perf = [int(value) for value in perf[-1]] if perf else None
+    last_phase = latest_fields(PHASE_LINE_RE, run)
+    renders = RENDER_RE.findall(run) if not fast_mode else []
+    last_render = [int(value) for value in renders[-1]] if renders else None
+    lite_batches = LITE_RE.findall(raw) if mode.startswith("lite") else []
+    last_lite = [int(value) for value in lite_batches[-1]] if lite_batches else None
+    fast = latest_fields(FAST_RE, run) if fast_mode else None
+    tic = latest_fields(TIC_RE, run) if fast_mode else None
+    diagnostic_heartbeats = DIAG_HEARTBEAT_RE.findall(run)
     last_diagnostic = diagnostic_heartbeats[-1] if diagnostic_heartbeats else None
-    diagnostic_stages = DIAG_STAGE_RE.findall(raw)
+    diagnostic_stages = DIAG_STAGE_RE.findall(run)
     last_exit = raw.rfind("DOOM_EXIT")
     last_cleanup_done = raw.rfind("DOOM_CLEANUP ui_resumed")
     last_zone = raw.rfind("DOOM_ZONE backing")
@@ -75,18 +114,19 @@ def state():
     last_status = raw.rfind("=============SYSTEM STATUS")
     latest_task_list = raw[last_status:] if last_status >= 0 else ""
     doom_task_visible = bool(re.search(r"(?m)^Doom\s+[XRBSD]\s+", latest_task_list))
-    if last_lite_perf > last_start and last_lite_perf > last_lite_exit:
+    if mode == "lite_running":
         stage = "E1M1 Lite 运行中"
-    elif last_lite_exit > last_start:
+    elif mode == "lite_exited":
         stage = "E1M1 Lite 已退出"
-    elif last_start < 0:
+    elif mode == "idle":
         stage = "等待启动"
     elif last_exit > last_start:
-        stage = "已退出" if last_cleanup_done > last_exit else "退出清理中"
+        prefix = "E1M1 混合版" if fast_mode else "E1M1"
+        stage = prefix + (" 已退出" if last_cleanup_done > last_exit else " 退出清理中")
     elif last_status > last_start and not doom_task_visible:
         stage = "应用界面"
     elif last_verified > last_start:
-        stage = "引擎运行中"
+        stage = "E1M1 混合版运行中" if fast_mode else "引擎运行中"
     elif last_zone > last_start:
         stage = "交换区校验中"
     else:
@@ -101,6 +141,8 @@ def state():
         "zram_kb": zram[-1] if zram else None,
         "memory_history": [a for a, _ in mem[-40:]],
         "starts": raw.count("DOOM_START"),
+        "mode": "hybrid" if fast_mode else "legacy" if mode == "full"
+                else "lite" if mode.startswith("lite") else "idle",
         "stage": stage,
         "zone_verified": raw.count("DOOM_ZONE verified"),
         "errors": len(errors),
@@ -114,9 +156,13 @@ def state():
             "other_ms": round(last_perf[4] / last_perf[0]),
         } if last_perf and last_perf[0] else None,
         "phases": {
-            "logic_ms": round(last_phase[1] / last_phase[0]),
-            "draw_ms": round(last_phase[2] / last_phase[0]),
-        } if last_phase and last_phase[0] else None,
+            "logic_ms": round(last_phase["logic_ms"] / last_phase["frames"], 1),
+            "draw_ms": round(last_phase["draw_ms"] / last_phase["frames"], 1),
+            "logic_max_ms": last_phase.get("logic_max_ms"),
+            "draw_max_ms": last_phase.get("draw_max_ms"),
+        } if last_phase and all(key in last_phase for key in
+                                ("frames", "logic_ms", "draw_ms"))
+             and last_phase["frames"] > 0 else None,
         "render": {
             "setup_ms": round(last_render[1] / last_render[0]),
             "bsp_ms": round(last_render[2] / last_render[0]),
@@ -131,6 +177,26 @@ def state():
             "max_interval_ms": last_lite[4],
             "map": bool(last_lite[5]),
         } if last_lite and last_lite[0] and last_lite[1] else None,
+        "fast": {
+            "fps": round(fast["frames"] * 1000 / fast["elapsed_ms"], 2),
+            "frame_ms": round(fast["elapsed_ms"] / fast["frames"], 1),
+            "max_interval_ms": fast.get("max_interval_ms"),
+            "render_ms": round(fast["render_ms"] / fast["frames"], 1),
+            "max_render_ms": fast.get("max_render_ms"),
+            "present_ms": round(fast["present_ms"] / fast["frames"], 1),
+            "max_present_ms": fast.get("max_present_ms"),
+            "health": fast.get("hp"),
+            "kills": fast.get("kills"),
+            "blue_key": bool(fast["blue"]) if "blue" in fast else None,
+            "map": bool(fast["map"]) if "map" in fast else None,
+        } if fast and all(key in fast for key in
+                          ("frames", "elapsed_ms", "render_ms", "present_ms"))
+             and fast["frames"] > 0 and fast["elapsed_ms"] > 0 else None,
+        "tic": {
+            "average_ms": round(tic["sum_ms"] / tic["tics"], 2),
+            "max_ms": tic["max_ms"],
+        } if tic and all(key in tic for key in ("tics", "sum_ms", "max_ms"))
+             and tic["tics"] > 0 else None,
         "diagnostic": {
             "seconds": int(last_diagnostic[0]) if last_diagnostic else None,
             "key": last_diagnostic[1] if last_diagnostic else None,

@@ -13,6 +13,7 @@
 #include "sys_llapi.h"
 #endif
 #include "E1M1Grid.h"
+#include "DoomLiteRender.h"
 
 #define LITE_W LCD_PIX_W
 #define LITE_H LCD_PIX_H
@@ -165,7 +166,6 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing) {
     pixels[(LITE_H / 2u) * LITE_W + LITE_W / 2u - 1u] = 24;
 }
 
-#ifndef DOOM_LITE_RAY_TEST
 static void draw_map(uint8_t *pixels, int32_t x, int32_t y) {
     const int ox = (LITE_W - E1M1_WIDTH) / 2;
     const int oy = (LITE_H - E1M1_HEIGHT) / 2;
@@ -184,6 +184,13 @@ static void draw_map(uint8_t *pixels, int32_t x, int32_t y) {
     }
 }
 
+void DoomLite_RenderFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
+                          uint8_t facing, int map_mode) {
+    if (map_mode) draw_map(pixels, x_q8, y_q8);
+    else draw_scene(pixels, x_q8, y_q8, facing);
+}
+
+#ifndef DOOM_LITE_RAY_TEST
 static void move_player(int32_t *x, int32_t *y, uint8_t facing, int forward) {
     const int32_t dx = (sine_q14((uint8_t)(facing + 64u)) * 12 * forward) >> 6;
     const int32_t dy = (sine_q14(facing) * 12 * forward) >> 6;
@@ -240,8 +247,7 @@ static void doom_lite_task(void *unused) {
                 if (interval > max_interval_ms) max_interval_ms = interval;
             }
             previous_frame_ms = render_begin;
-            if (map_mode) draw_map(pixels, x, y);
-            else draw_scene(pixels, x, y, facing);
+            DoomLite_RenderFrame(pixels, x, y, facing, map_mode);
             const uint32_t render_end = ll_get_time_ms();
             present(pixels);
             const uint32_t end = ll_get_time_ms();

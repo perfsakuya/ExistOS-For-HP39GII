@@ -19,6 +19,7 @@
 #include "SystemUI.h"
 #include "keyboard_gii39.h"
 #include "sys_llapi.h"
+#include "../doom_lite/DoomLiteRender.h"
 
 #define DOOM_WIDTH 120u
 #define DOOM_HEIGHT 120u
@@ -53,13 +54,30 @@ static uint32_t perf_display_ms;
 static unsigned perf_samples;
 static uint32_t phase_logic_ms;
 static uint32_t phase_draw_ms;
+static uint32_t phase_logic_max_ms;
+static uint32_t phase_draw_max_ms;
 static unsigned phase_samples;
+static uint32_t tic_sum_ms;
+static uint32_t tic_max_ms;
+static unsigned tic_samples;
 static uint32_t render_setup_ms;
 static uint32_t render_bsp_ms;
 static uint32_t render_planes_ms;
 static uint32_t render_masked_ms;
 static unsigned render_samples;
 int SkyOS_DoomFlatWalls;
+int SkyOS_DoomFastMode;
+volatile int SkyOS_DoomFastRunning;
+static uint8_t *fast_pixels;
+static uint32_t fast_batch_start_ms;
+static uint32_t fast_render_ms;
+static uint32_t fast_present_ms;
+static uint32_t fast_last_frame_ms;
+static uint32_t fast_max_interval_ms;
+static uint32_t fast_max_render_ms;
+static uint32_t fast_max_present_ms;
+static unsigned fast_frames;
+static unsigned fast_total_frames;
 
 /* The display FIFO has four entries. Five one-pixel requests issued after
  * the scene force its source buffer to have been consumed before reuse. */
@@ -67,6 +85,94 @@ static void display_barrier(void) {
     static uint8_t barrier_pixel;
     for (unsigned i = 0; i < 5; ++i)
         ll_disp_put_area(&barrier_pixel, 0, 0, 0, 0);
+}
+
+/* A small status strip makes original game state visible in the fast mode.
+ * The Lite scene itself is still a static approximation of E1M1 geometry. */
+static void fast_glyph(uint8_t *pixels, unsigned x, char glyph) {
+    static const uint8_t digits[10][5] = {
+        {7,5,5,5,7}, {2,6,2,2,7}, {7,1,7,4,7}, {7,1,7,1,7},
+        {5,5,7,1,1}, {7,4,7,1,7}, {7,4,7,5,7}, {7,1,1,1,1},
+        {7,5,7,5,7}, {7,5,7,1,7}
+    };
+    static const uint8_t h[5] = {5,5,7,5,5};
+    static const uint8_t p[5] = {7,5,7,4,4};
+    static const uint8_t k[5] = {5,5,6,5,5};
+    static const uint8_t b[5] = {6,5,6,5,6};
+    const uint8_t *rows = glyph >= '0' && glyph <= '9' ? digits[glyph - '0']
+        : glyph == 'H' ? h : glyph == 'P' ? p
+        : glyph == 'K' ? k : b;
+    for (unsigned y = 0; y < 5u; ++y)
+        for (unsigned bit = 0; bit < 3u; ++bit)
+            if (rows[y] & (4u >> bit))
+                pixels[(y + 1u) * LCD_PIX_W + x + bit] = 12u;
+}
+
+static void fast_number(uint8_t *pixels, unsigned x, unsigned value,
+                        unsigned places) {
+    unsigned divisor = places == 3u ? 100u : 10u;
+    while (places--) {
+        fast_glyph(pixels, x, (char)('0' + value / divisor % 10u));
+        x += 4u;
+        divisor /= 10u;
+    }
+}
+
+void SkyOS_DoomFastFrame(fixed_t x, fixed_t y, angle_t angle,
+                         int map_mode, int health, int kills,
+                         int has_blue_key) {
+    if (!fast_pixels) I_Error("fast framebuffer unavailable");
+    const uint32_t start_ms = ll_get_time_ms();
+    if (fast_last_frame_ms) {
+        const uint32_t interval = start_ms - fast_last_frame_ms;
+        if (interval > fast_max_interval_ms) fast_max_interval_ms = interval;
+    }
+    fast_last_frame_ms = start_ms;
+    DoomLite_RenderFrame(fast_pixels, x >> 8, y >> 8,
+                         (uint8_t)(angle >> 24), map_mode);
+    memset(fast_pixels, 236, LCD_PIX_W);
+    fast_glyph(fast_pixels, 2u, 'H');
+    fast_glyph(fast_pixels, 6u, 'P');
+    fast_number(fast_pixels, 12u,
+                health < 0 ? 0u : health > 999 ? 999u : (unsigned)health, 3u);
+    fast_glyph(fast_pixels, 30u, 'K');
+    fast_number(fast_pixels, 36u,
+                kills < 0 ? 0u : kills > 99 ? 99u : (unsigned)kills, 2u);
+    fast_glyph(fast_pixels, 49u, 'B');
+    if (has_blue_key) {
+        for (unsigned row = 1u; row < 6u; ++row)
+            memset(fast_pixels + row * LCD_PIX_W + 54u, 12, 4u);
+    }
+    const uint32_t rendered_ms = ll_get_time_ms();
+    ll_disp_put_area(fast_pixels, 0, 0, LCD_PIX_W - 1u, LCD_PIX_H - 1u);
+    display_barrier();
+    const uint32_t done_ms = ll_get_time_ms();
+    const uint32_t render_ms = rendered_ms - start_ms;
+    const uint32_t present_ms = done_ms - rendered_ms;
+    if (fast_total_frames++ == 0u)
+        printf("DOOM_FAST_FIRST render_ms=%lu present_ms=%lu x=%ld y=%ld\n",
+               (unsigned long)render_ms, (unsigned long)present_ms,
+               (long)(x >> 16), (long)(y >> 16));
+    if (fast_frames == 0u) fast_batch_start_ms = start_ms;
+    fast_render_ms += render_ms;
+    fast_present_ms += present_ms;
+    if (render_ms > fast_max_render_ms) fast_max_render_ms = render_ms;
+    if (present_ms > fast_max_present_ms) fast_max_present_ms = present_ms;
+    if (++fast_frames == 32u) {
+        printf("DOOM_FAST frames=32 elapsed_ms=%lu render_ms=%lu present_ms=%lu max_interval_ms=%lu max_render_ms=%lu max_present_ms=%lu hp=%d kills=%d blue=%d map=%d x=%ld y=%ld angle=%lu\n",
+               (unsigned long)(done_ms - fast_batch_start_ms),
+               (unsigned long)fast_render_ms,
+               (unsigned long)fast_present_ms,
+               (unsigned long)fast_max_interval_ms,
+               (unsigned long)fast_max_render_ms,
+               (unsigned long)fast_max_present_ms,
+               health, kills, has_blue_key, map_mode,
+               (long)(x >> 16), (long)(y >> 16),
+               (unsigned long)(angle >> 24));
+        fast_frames = 0u;
+        fast_render_ms = fast_present_ms = fast_max_interval_ms = 0u;
+        fast_max_render_ms = fast_max_present_ms = 0u;
+    }
 }
 
 static int check_game_buffer(void) {
@@ -96,12 +202,28 @@ unsigned SkyOS_DoomNowMs(void) { return ll_get_time_ms(); }
 void SkyOS_DoomProfilePhases(unsigned logic_ms, unsigned draw_ms) {
     phase_logic_ms += logic_ms;
     phase_draw_ms += draw_ms;
+    if (logic_ms > phase_logic_max_ms) phase_logic_max_ms = logic_ms;
+    if (draw_ms > phase_draw_max_ms) phase_draw_max_ms = draw_ms;
     if (++phase_samples == 16u) {
-        printf("DOOM_PHASE frames=%u logic_ms=%lu draw_ms=%lu\n",
+        printf("DOOM_PHASE frames=%u logic_ms=%lu draw_ms=%lu logic_max_ms=%lu draw_max_ms=%lu\n",
                phase_samples, (unsigned long)phase_logic_ms,
-               (unsigned long)phase_draw_ms);
+               (unsigned long)phase_draw_ms,
+               (unsigned long)phase_logic_max_ms,
+               (unsigned long)phase_draw_max_ms);
         phase_logic_ms = phase_draw_ms = 0;
+        phase_logic_max_ms = phase_draw_max_ms = 0;
         phase_samples = 0;
+    }
+}
+
+void SkyOS_DoomProfileTic(unsigned elapsed_ms) {
+    tic_sum_ms += elapsed_ms;
+    if (elapsed_ms > tic_max_ms) tic_max_ms = elapsed_ms;
+    if (++tic_samples == 35u) {
+        printf("DOOM_TIC tics=35 sum_ms=%lu max_ms=%lu\n",
+               (unsigned long)tic_sum_ms, (unsigned long)tic_max_ms);
+        tic_sum_ms = tic_max_ms = 0u;
+        tic_samples = 0u;
     }
 }
 
@@ -132,7 +254,10 @@ void I_InitScreen_e32(void) {
     perf_wall_ms = perf_convert_ms = perf_display_ms = 0;
     perf_samples = 0;
     phase_logic_ms = phase_draw_ms = 0;
+    phase_logic_max_ms = phase_draw_max_ms = 0;
     phase_samples = 0;
+    tic_sum_ms = tic_max_ms = 0;
+    tic_samples = 0;
     render_setup_ms = render_bsp_ms = render_planes_ms = render_masked_ms = 0;
     render_samples = 0;
 }
@@ -164,7 +289,7 @@ static int map_key(uint16_t key) {
     case KEY_F3: return KEYD_L;       /* strafe left */
     case KEY_F4: return KEYD_R;       /* strafe right */
     case KEY_F5: return KEYD_SELECT;  /* automap */
-    case KEY_ENTER: return KEYD_START; /* menu */
+    case KEY_ENTER: return SkyOS_DoomFastMode ? 0 : KEYD_START;
     default: return 0;
     }
 }
@@ -246,6 +371,12 @@ void I_Error(const char *message, ...) {
 static void doom_task(void *unused) {
     (void)unused;
     uint8_t *ui_pixels = SystemUIBorrowFrameBuffer();
+    fast_pixels = ui_pixels;
+    fast_last_frame_ms = 0u;
+    fast_frames = 0u;
+    fast_total_frames = 0u;
+    fast_render_ms = fast_present_ms = fast_max_interval_ms = 0u;
+    fast_max_render_ms = fast_max_present_ms = 0u;
     game_pixels = NULL;
     game_buffer_allocation = NULL;
     lcd_pixels = NULL;
@@ -270,7 +401,8 @@ static void doom_task(void *unused) {
     }
     printf("DOOM_BUFFERS ui=%p game=%p lcd=%p\n",
            ui_pixels, game_pixels, lcd_pixels);
-    printf("DOOM_MODE flat_walls=%d\n", SkyOS_DoomFlatWalls);
+    printf("DOOM_MODE flat_walls=%d fast=%d\n",
+           SkyOS_DoomFlatWalls, SkyOS_DoomFastMode);
     // Remove the suspended UI from the unused LCD margins before the first
     // game frame.
     memset(ui_pixels, 0, LCD_PIX_W * LCD_PIX_H);
@@ -281,12 +413,22 @@ static void doom_task(void *unused) {
 
     const int outcome = setjmp(app_exit);
     if (!outcome) {
+        const uint32_t boot_start_ms = ll_get_time_ms();
         I_PreInitGraphics();
+        const uint32_t preinit_ms = ll_get_time_ms();
         // Keep swap enabled after exit: dirty zone pages may remain cached
         // and must be writable to the FTL when they are later evicted.
         ll_mem_swap_enable(true);
+        const uint32_t swap_ms = ll_get_time_ms();
         Z_Init();
+        const uint32_t zone_ms = ll_get_time_ms();
         InitGlobals();
+        if (SkyOS_DoomFastMode)
+            printf("DOOM_BOOT preinit_ms=%lu swap_ms=%lu zone_ms=%lu globals_ms=%lu\n",
+                   (unsigned long)(preinit_ms - boot_start_ms),
+                   (unsigned long)(swap_ms - preinit_ms),
+                   (unsigned long)(zone_ms - swap_ms),
+                   (unsigned long)(ll_get_time_ms() - zone_ms));
         D_DoomMain();
     }
     printf("DOOM_EXIT outcome=%d frames=%u allocated=%lu critical=%lu\n",
@@ -296,6 +438,7 @@ static void doom_task(void *unused) {
     _g = NULL;
     display_barrier();
 done:;
+    fast_pixels = NULL;
     // Do not deliver the same F6 press to the resumed UI. A held F6
     // switches the UI to Settings while Doom is still handing off.
     unsigned release_wait = 0;
@@ -333,20 +476,25 @@ done:;
                (unsigned long)ulCriticalNesting);
     }
     app_running = 0;
+    SkyOS_DoomFastRunning = 0;
     printf("DOOM_CLEANUP task_delete\n");
     vTaskDelete(NULL);
 }
 
-static void doom_start(int flat_walls) {
+static void doom_start(int mode) {
     if (app_running) return;
     app_running = 1;
-    SkyOS_DoomFlatWalls = flat_walls;
+    SkyOS_DoomFlatWalls = mode == 1;
+    SkyOS_DoomFastMode = mode == 2;
+    SkyOS_DoomFastRunning = SkyOS_DoomFastMode;
     if (xTaskCreate(doom_task, "Doom", 4096, NULL,
                     configMAX_PRIORITIES - 3, NULL) != pdPASS) {
         app_running = 0;
+        SkyOS_DoomFastRunning = 0;
         printf("DOOM_ERROR task allocation\n");
     }
 }
 
 void DoomPort_Start(void) { doom_start(0); }
 void DoomPort_StartFlat(void) { doom_start(1); }
+void DoomPort_StartFast(void) { doom_start(2); }

@@ -59,6 +59,9 @@
 #include "protocol.h"
 #include "i_network.h"
 #ifdef SKYOS
+extern int SkyOS_DoomFastMode;
+extern unsigned SkyOS_DoomNowMs(void);
+extern void SkyOS_DoomProfileTic(unsigned elapsed_ms);
 #include "i_system_e32.h"
 #endif
 #include "i_system.h"
@@ -130,7 +133,14 @@ void TryRunTics (void)
             D_DoAdvanceDemo ();
 
         M_Ticker ();
+#ifdef SKYOS
+        const unsigned tic_start_ms = SkyOS_DoomFastMode ? SkyOS_DoomNowMs() : 0u;
+#endif
         G_Ticker ();
+#ifdef SKYOS
+        if (SkyOS_DoomFastMode)
+            SkyOS_DoomProfileTic(SkyOS_DoomNowMs() - tic_start_ms);
+#endif
         _g->gametic++;
     }
 }

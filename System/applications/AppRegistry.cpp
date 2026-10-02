@@ -5,6 +5,7 @@ void StartKhiCAS(void);
 void Notes_Start(void);
 void DoomPort_Start(void);
 void DoomPort_StartFlat(void);
+void DoomPort_StartFast(void);
 void DoomLite_Start(void);
 extern const unsigned char gImage_khicas_ico[48 * 48];
 extern const unsigned char gImage_notes_ico[48 * 48];
@@ -16,6 +17,7 @@ static const AppEntry apps[] = {
     {"E1M1", gImage_notes_ico, DoomPort_Start},
     {"Flat", gImage_notes_ico, DoomPort_StartFlat},
     {"Lite", gImage_notes_ico, DoomLite_Start},
+    {"Hybrid", gImage_notes_ico, DoomPort_StartFast},
 };
 
 extern "C" size_t AppRegistry_Count(void) {

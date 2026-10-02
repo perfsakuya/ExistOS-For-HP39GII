@@ -40,6 +40,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <stdio.h>
 
 #include "doomdef.h"
 #include "doomtype.h"
@@ -85,6 +86,11 @@ static void D_UpdateFPS(void);
 #ifdef SKYOS
 extern unsigned SkyOS_DoomNowMs(void);
 extern void SkyOS_DoomProfilePhases(unsigned logic_ms, unsigned draw_ms);
+extern void SkyOS_DoomProfileTic(unsigned elapsed_ms);
+extern int SkyOS_DoomFastMode;
+extern void SkyOS_DoomFastFrame(fixed_t x, fixed_t y, angle_t angle,
+                               int map_mode, int health, int kills,
+                               int has_blue_key);
 #endif
 
 
@@ -183,6 +189,24 @@ static void D_Display (void)
 
     if (!I_StartDisplay())
         return;
+
+#ifdef SKYOS
+    /* Keep the original E1M1 simulation and input path, but present its
+     * current player state through the small grayscale ray caster. The
+     * legacy screen buffers still exist for engine initialization. */
+    if (SkyOS_DoomFastMode && _g->gamestate == GS_LEVEL && _g->player.mo)
+    {
+        SkyOS_DoomFastFrame(_g->player.mo->x, _g->player.mo->y,
+                            _g->player.mo->angle,
+                            (_g->automapmode & am_active) != 0,
+                            _g->player.health, _g->player.killcount,
+                            _g->player.cards[it_bluecard] != 0);
+        _g->oldgamestate = _g->wipegamestate = _g->gamestate;
+        D_BuildNewTiccmds();
+        I_EndDisplay();
+        return;
+    }
+#endif
 
     // save the current screen if about to wipe
     wipe = (_g->gamestate != _g->wipegamestate);
@@ -291,7 +315,14 @@ static void D_DoomLoop(void)
                 D_DoAdvanceDemo ();
 
             M_Ticker ();
+#ifdef SKYOS
+            const unsigned tic_start_ms = SkyOS_DoomFastMode ? SkyOS_DoomNowMs() : 0u;
+#endif
             G_Ticker ();
+#ifdef SKYOS
+            if (SkyOS_DoomFastMode)
+                SkyOS_DoomProfileTic(SkyOS_DoomNowMs() - tic_start_ms);
+#endif
 
             _g->gametic++;
             _g->maketic++;
@@ -786,7 +817,15 @@ static void D_DoomMainSetup(void)
 
 void D_DoomMain(void)
 {
+#ifdef SKYOS
+    const unsigned setup_start_ms = SkyOS_DoomNowMs();
+#endif
     D_DoomMainSetup(); // CPhipps - setup out of main execution stack
+#ifdef SKYOS
+    if (SkyOS_DoomFastMode)
+        printf("DOOM_BOOT engine_setup_ms=%u\n",
+               SkyOS_DoomNowMs() - setup_start_ms);
+#endif
 
     D_DoomLoop ();  // never returns
 }
