@@ -1,0 +1,7 @@
+{
+  "wordmark": "SkyOS",
+  "font": "timesbd.ttf",
+  "font_sha256": "54fbe2c70af7c85a97bed0573227e3ccc4b2486012e3ca2a40c6bc77065846f5",
+  "format": "50x25 8-bit row-major grayscale, 0=black, 255=white",
+  "logo_sha256": "a242012140af0f97eb90684323edc302d8ff63b3314e7ff51bd6757aebcc93fd"
+}
