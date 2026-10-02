@@ -52,5 +52,7 @@ SECTIONS
   
 	
 	__HEAP_START = .;
+	/* HEAP_END is 0x7edfc with the stacks in SystemConfig.h. */
+	ASSERT(__HEAP_START + 0x8000 <= 0x7edfc, "OSLoader has less than 32 KiB of heap")
 
 }

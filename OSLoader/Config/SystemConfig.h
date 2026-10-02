@@ -39,14 +39,17 @@
     #define MEM_COMPRESSION_ALGORITHM     (MINILZO) //algorithm
 #endif
 
-#define TOTAL_MEM_PAGE  (292)
+// A 14 MiB VROM needs eight more 1 KiB page tables than the original 6 MiB map.
+// Reserve their 32 KiB in physical RAM by reducing the VROM page cache;
+// keep the VRAM cache and compressed RAM pool at their original sizes.
+#define TOTAL_MEM_PAGE  (260)
 
 #if VMRAM_USE_FTL
     #if USE_TINY_PAGE
         #if USE_HARDWARE_DFLPT
             #if SEPARATE_VMM_CACHE
                 #if MEM_COMPRESSION_ALGORITHM
-                    #define NUM_CACHEPAGE_VROM             ( 160 )  
+                    #define NUM_CACHEPAGE_VROM             ( 128 )
                     #define NUM_CACHEPAGE_VRAM             ( 40 ) 
                     #define ZRAM_SIZE                      ( (TOTAL_MEM_PAGE - NUM_CACHEPAGE_VROM - NUM_CACHEPAGE_VRAM) * 1024 ) 
                     #define ZRAM_COMPRESSED_SIZE           (int)( ZRAM_SIZE * 3 ) // (Assume that the compression ratio is 0.33)

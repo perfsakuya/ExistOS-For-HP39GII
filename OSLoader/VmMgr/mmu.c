@@ -16,7 +16,7 @@
  
 #if USE_HARDWARE_DFLPT
     #define DFLPT_BASE  (0x800C0000)
-    #define MAX_SEG_SUPPORTED (15U)
+    #define MAX_SEG_SUPPORTED (TOTAL_VM_SEG)
     #define INC_HW_MPTE_Ptr()  do{HW_MPTE_Ptr++;if(HW_MPTE_Ptr > 7)HW_MPTE_Ptr = 1;}while(0)
     uint32_t *L1PTE = (uint32_t *)DFLPT_BASE;
 
