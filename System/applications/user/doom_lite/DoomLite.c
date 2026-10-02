@@ -77,6 +77,8 @@ typedef struct {
     uint32_t distance_q8;
     int gx;
     int gy;
+    uint8_t door_id;
+    uint8_t door_u;
 } RayHit;
 
 /* Cross only grid boundaries. The old eight-unit march checked each wall
@@ -100,7 +102,8 @@ static RayHit cast_ray(int32_t x, int32_t y, uint16_t angle) {
         : (uint32_t)(y - gy * (int32_t)cell);
     uint32_t next_x = abs_x ? (offset_x << 14) / abs_x : UINT32_MAX;
     uint32_t next_y = abs_y ? (offset_y << 14) / abs_y : UINT32_MAX;
-    RayHit hit = { LITE_MAX_DISTANCE_Q8, gx, gy };
+    RayHit hit = { LITE_MAX_DISTANCE_Q8, gx, gy,
+                   E1M1_PORTAL_NO_DOOR, 0u };
     for (unsigned crossed = 0; crossed < E1M1_WIDTH + E1M1_HEIGHT; ++crossed) {
         if (next_x < next_y) {
             hit.distance_q8 = next_x;
@@ -143,17 +146,24 @@ static const E1M1PortalCell *portal_cell(int gx, int gy) {
     return NULL;
 }
 
-static uint32_t portal_hit_q8(const E1M1PortalCell *cell, int32_t x,
-                              int32_t y, int32_t dx, int32_t dy,
-                              uint32_t entry_q8, uint32_t exit_q8,
-                              const uint8_t door_open[E1M1_DOOR_COUNT]) {
-    uint32_t nearest = UINT32_MAX;
+typedef struct {
+    uint32_t distance_q8;
+    uint8_t door_id;
+    uint8_t door_u;
+} PortalHit;
+
+static PortalHit portal_hit_q8(const E1M1PortalCell *cell, int32_t x,
+                               int32_t y, int32_t dx, int32_t dy,
+                               uint32_t entry_q8, uint32_t exit_q8,
+                               const uint8_t door_open[E1M1_DOOR_COUNT]) {
+    PortalHit nearest = { UINT32_MAX, E1M1_PORTAL_NO_DOOR, 0u };
     for (unsigned ref = cell->first_ref;
          ref < (unsigned)cell->first_ref + cell->ref_count; ++ref) {
         const E1M1PortalSegment *segment =
             &e1m1_portal_segments[e1m1_portal_refs[ref]];
+        uint8_t door = E1M1_PORTAL_NO_DOOR;
         if (segment->door_sector != E1M1_PORTAL_NO_DOOR) {
-            const uint8_t door = e1m1_door_index_by_sector[
+            door = e1m1_door_index_by_sector[
                 segment->door_sector];
             if (door < E1M1_DOOR_COUNT && door_open && door_open[door])
                 continue;
@@ -182,7 +192,15 @@ static uint32_t portal_hit_q8(const E1M1PortalCell *cell, int32_t x,
             continue;
         const uint32_t distance = (uint32_t)(scaled /
                                              (uint64_t)denominator);
-        if (distance < nearest) nearest = distance;
+        if (distance < nearest.distance_q8) {
+            nearest.distance_q8 = distance;
+            nearest.door_id = door;
+            /* The segment fraction is Q8; reversing line orientation does
+             * not change the symmetric frame and centre-seam design. */
+            const uint32_t u = door < E1M1_DOOR_COUNT
+                ? (uint32_t)(along_segment / denominator) : 0u;
+            nearest.door_u = (uint8_t)(u > 255u ? 255u : u);
+        }
     }
     return nearest;
 }
@@ -208,7 +226,8 @@ static RayHit cast_game_ray(int32_t x, int32_t y, uint16_t angle,
     uint32_t next_x = abs_x ? (offset_x << 14) / abs_x : UINT32_MAX;
     uint32_t next_y = abs_y ? (offset_y << 14) / abs_y : UINT32_MAX;
     uint32_t entry = 0;
-    RayHit hit = { LITE_MAX_DISTANCE_Q8, gx, gy };
+    RayHit hit = { LITE_MAX_DISTANCE_Q8, gx, gy,
+                   E1M1_PORTAL_NO_DOOR, 0u };
     for (unsigned crossed = 0; crossed < E1M1_WIDTH + E1M1_HEIGHT;
          ++crossed) {
         if (entry > LITE_MAX_DISTANCE_Q8) break;
@@ -223,10 +242,12 @@ static RayHit cast_game_ray(int32_t x, int32_t y, uint16_t angle,
         if (special) {
             uint32_t exit = next_x < next_y ? next_x : next_y;
             if (exit > LITE_MAX_DISTANCE_Q8) exit = LITE_MAX_DISTANCE_Q8;
-            const uint32_t exact = portal_hit_q8(special, x, y, dx, dy,
-                                                  entry, exit, door_open);
-            if (exact != UINT32_MAX) {
-                hit.distance_q8 = exact;
+            const PortalHit exact = portal_hit_q8(special, x, y, dx, dy,
+                                                   entry, exit, door_open);
+            if (exact.distance_q8 != UINT32_MAX) {
+                hit.distance_q8 = exact.distance_q8;
+                hit.door_id = exact.door_id;
+                hit.door_u = exact.door_u;
                 return hit;
             }
         } else if (e1m1_grid[iy * E1M1_WIDTH + ix]) {
@@ -257,6 +278,24 @@ static void present(uint8_t *pixels) {
 }
 #endif
 
+/* A closed WAD door must read as a separate surface on the small grayscale
+ * display. Dark frame and centre seam surround light metal panels. */
+static uint8_t door_panel_color(unsigned y, unsigned top, unsigned bottom,
+                                 unsigned u) {
+    const unsigned height = bottom - top;
+    const unsigned v = y - top;
+    if (height < 8u) return 70u;
+    if (u < 20u || u > 235u || v < 2u || v >= height - 2u)
+        return 30u;
+    if (u >= 118u && u <= 137u) return 42u;
+    if (height >= 24u &&
+        ((v >= height / 4u && v < height / 4u + 2u) ||
+         (v >= height * 3u / 4u && v < height * 3u / 4u + 2u)))
+        return 75u;
+    if (u < 32u || u > 223u) return 112u;
+    return u < 128u ? 184u : 207u;
+}
+
 static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
                        int game_mode,
                        const uint8_t door_open[E1M1_DOOR_COUNT]) {
@@ -267,6 +306,7 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
     uint8_t wall_mortar1[LITE_RAYS];
     uint8_t wall_mortar2[LITE_RAYS];
     uint8_t wall_mortar3[LITE_RAYS];
+    uint8_t wall_door[LITE_RAYS];
     for (unsigned ray = 0; ray < LITE_RAYS; ++ray) {
         const int offset = ((int)ray * 168) / (int)(LITE_RAYS - 1u) - 84;
         const uint16_t angle = (uint16_t)((int)facing * 4 + offset);
@@ -291,6 +331,7 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
         wall_bottom[ray] = (uint8_t)bottom;
         wall_shade[ray] = (uint8_t)shade;
         if (game_mode) {
+            wall_door[ray] = hit.door_id != E1M1_PORTAL_NO_DOOR;
             /* A world-space U coordinate keeps brick joints on the wall as
              * the camera moves. Q14 direction times whole map units fits
              * signed 32 bits, avoiding a 64-bit multiply per ray. */
@@ -299,7 +340,8 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
                 (sine_q14_fine((uint16_t)(angle + 256u)) * hit_units >> 14);
             const int32_t hit_y = (y >> 8) +
                 (sine_q14_fine(angle) * hit_units >> 14);
-            wall_u[ray] = (uint8_t)(hit_x + hit_y) & 63u;
+            wall_u[ray] = wall_door[ray] ? hit.door_u
+                : (uint8_t)(hit_x + hit_y) & 63u;
             /* Three horizontal joints split a near wall into four courses.
              * Distant walls skip the joints to prevent one-pixel shimmer. */
             wall_mortar1[ray] = (uint8_t)(top + height / 4);
@@ -325,6 +367,9 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
                 uint8_t color;
                 if (yrow < wall_top[ray]) color = sky;
                 else if (yrow >= wall_bottom[ray]) color = floor;
+                else if (wall_door[ray])
+                    color = door_panel_color(yrow, wall_top[ray],
+                                             wall_bottom[ray], wall_u[ray]);
                 else {
                     const unsigned height = wall_bottom[ray] - wall_top[ray];
                     const unsigned course = yrow >= wall_mortar3[ray] ? 3u
@@ -375,6 +420,94 @@ static void draw_map(uint8_t *pixels, int32_t x, int32_t y) {
             for (int xx = -1; xx <= 1; ++xx)
                 pixels[(py + yy) * LITE_W + px + xx] = 0;
     }
+}
+
+/* Game-only map marks use the same one-pixel-per-grid-cell projection as
+ * draw_map(). Keep them separate so Lite's original map stays unchanged. */
+static int game_map_coordinate(int32_t world, int origin, int offset) {
+    const int cell = world >= 0 ? world / E1M1_CELL
+        : -((-world + E1M1_CELL - 1) / E1M1_CELL);
+    return cell - origin + offset;
+}
+
+static int game_map_x(int32_t world_x) {
+    return game_map_coordinate(world_x, E1M1_GX0,
+                               (LITE_W - E1M1_WIDTH) / 2);
+}
+
+static int game_map_y(int32_t world_y) {
+    return game_map_coordinate(world_y, E1M1_GY0,
+                               (LITE_H - E1M1_HEIGHT) / 2);
+}
+
+static void game_map_pixel(uint8_t *pixels, int x, int y, uint8_t color) {
+    const int left = (LITE_W - E1M1_WIDTH) / 2;
+    const int top = (LITE_H - E1M1_HEIGHT) / 2;
+    if (x >= left && x < left + E1M1_WIDTH &&
+        y >= top && y < top + E1M1_HEIGHT)
+        pixels[y * LITE_W + x] = color;
+}
+
+void DoomLite_RenderGameMapOverlay(uint8_t *pixels, const DoomLiteGame *game) {
+    if (!pixels || !game) return;
+
+    /* Closed doors fill their actual WAD rectangle. Open doors are light,
+     * with dark endcaps so the passage still has a visible location. */
+    for (unsigned i = 0; i < E1M1_DOOR_COUNT; ++i) {
+        const E1M1Door *door = &e1m1_doors[i];
+        const int x0 = game_map_x(door->x0), x1 = game_map_x(door->x1);
+        const int y0 = game_map_y(door->y0), y1 = game_map_y(door->y1);
+        const int along_x = x1 - x0 >= y1 - y0;
+        for (int y = y0; y <= y1; ++y)
+            for (int x = x0; x <= x1; ++x)
+                game_map_pixel(pixels, x, y, game->door_open[i]
+                    ? ((along_x ? x == x0 || x == x1 : y == y0 || y == y1)
+                        ? 92u : 250u)
+                    : 0u);
+    }
+
+    /* Use the converted WAD's original exit switch, not a guessed point. */
+    for (unsigned i = 0; i < E1M1_SPECIAL_LINE_COUNT; ++i) {
+        const E1M1SpecialLine *line = &e1m1_special_lines[i];
+        if (line->special != 11u) continue;
+        const int x = game_map_x(((int32_t)line->x1 + line->x2) / 2);
+        const int y = game_map_y(((int32_t)line->y1 + line->y2) / 2);
+        for (int arm = -2; arm <= 2; ++arm) {
+            game_map_pixel(pixels, x + arm, y + arm, 0u);
+            game_map_pixel(pixels, x + arm, y - arm, 0u);
+        }
+    }
+
+    /* The blue key is a hollow diamond until picked up. */
+    for (unsigned i = 0; i < E1M1_THING_COUNT; ++i) {
+        const E1M1Thing *thing = &e1m1_things[i];
+        if (thing->type != 5u || !DoomLiteGame_ThingActive(game, i))
+            continue;
+        const int x = game_map_x(thing->x), y = game_map_y(thing->y);
+        for (int dx = -2; dx <= 2; ++dx) {
+            const int dy = 2 - (dx < 0 ? -dx : dx);
+            game_map_pixel(pixels, x + dx, y + dy, 0u);
+            game_map_pixel(pixels, x + dx, y - dy, 0u);
+        }
+        game_map_pixel(pixels, x, y, 250u);
+    }
+
+    const int px = (game->x_q8 >> 13) - E1M1_GX0 +
+                   (LITE_W - E1M1_WIDTH) / 2;
+    const int py = (game->y_q8 >> 13) - E1M1_GY0 +
+                   (LITE_H - E1M1_HEIGHT) / 2;
+    for (int dy = -2; dy <= 2; ++dy)
+        for (int dx = -2; dx <= 2; ++dx)
+            game_map_pixel(pixels, px + dx, py + dy, 250u);
+    const int heading_x = sine_q14((uint8_t)(game->facing + 64u));
+    const int heading_y = sine_q14(game->facing);
+    for (int distance = 2; distance <= 5; ++distance)
+        game_map_pixel(pixels,
+                       px + heading_x * distance / 16384,
+                       py + heading_y * distance / 16384, 0u);
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx)
+            game_map_pixel(pixels, px + dx, py + dy, 0u);
 }
 
 void DoomLite_RenderFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,

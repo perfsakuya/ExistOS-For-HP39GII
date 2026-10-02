@@ -304,7 +304,9 @@ static void doom_game_task(void *unused) {
             DoomLite_RenderGameFrame(pixels, game_state.x_q8, game_state.y_q8,
                                      game_state.facing, map_mode,
                                      game_state.door_open);
-            if (!map_mode)
+            if (map_mode)
+                DoomLite_RenderGameMapOverlay(pixels, &game_state);
+            else
                 DoomLite_RenderGameThings(pixels, &game_state);
             if (message && (int32_t)(game_state.ticks - message_until_tick) >= 0)
                 message = NULL;

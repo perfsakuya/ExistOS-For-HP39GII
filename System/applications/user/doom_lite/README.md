@@ -32,6 +32,13 @@ without collecting the full task table. Its byte fields are `a` (malloc
 allocated/current capacity), `z` (ZRAM pool allocated/capacity), and `s`/`w`
 (SRAM/Swap heap arena extent). The arena extents can stay high after frees and
 must not be read as live allocation.
+The Game-only F5 map marks closed doors as dark rectangles, open doors as
+light rectangles with dark ends, the uncollected blue key as a diamond, and
+the original exit switch as an X. A short line shows the player's heading.
+The separate Lite map retains its original appearance.
+In the 3D view, closed doors use a light panel with a dark frame and centre
+seam so they are distinguishable from masonry. F2 still opens them instantly;
+animated door height is not implemented.
 
 Host geometry and gameplay checks pass, and the ARM System image builds
 within the ROM partition. On the calculator, the user confirmed the scene,

@@ -4,7 +4,8 @@
  * This checks the production trigonometry against libm, compares rays with a
  * one-unit reference march, and checks the exact renderer's frame bounds.
  * Optional arguments: preview.pgm [facing] [print-ray-table], or
- * --game-preview preview.pgm [start|key|enemy]. */
+ * --game-preview preview.pgm [start|key|enemy|door|door-open], or
+ * --game-map-preview preview.pgm [open|key-collected]. */
 #define DOOM_LITE_RAY_TEST
 #define LCD_PIX_W 256
 #define LCD_PIX_H 127
@@ -48,10 +49,28 @@ static int check_game_portals(void) {
     const RayHit shut = cast_game_ray(x, y, 256u, closed);
     const RayHit pass = cast_game_ray(x, y, 256u, open);
     if (shut.distance_q8 != 24u * 256u ||
-        pass.distance_q8 <= shut.distance_q8 + 32u * 256u) {
-        fprintf(stderr, "door ray invalid: closed=%u open=%u Q8\n",
-                shut.distance_q8, pass.distance_q8);
+        pass.distance_q8 <= shut.distance_q8 + 32u * 256u ||
+        shut.door_id != 0u || pass.door_id != E1M1_PORTAL_NO_DOOR ||
+        shut.door_u < 118u || shut.door_u > 137u) {
+        fprintf(stderr,
+                "door ray invalid: closed=%u door=%u u=%u, open=%u door=%u Q8\n",
+                shut.distance_q8, shut.door_id, shut.door_u,
+                pass.distance_q8, pass.door_id);
         return 12;
+    }
+
+    /* Rendered closed door needs a distinct dark centre seam. Its opened
+     * state must reveal the wall beyond, with no stale door overlay. */
+    uint8_t closed_frame[LITE_W * LITE_H];
+    uint8_t open_frame[LITE_W * LITE_H];
+    DoomLite_RenderGameFrame(closed_frame, x, y, 64u, 0, closed);
+    DoomLite_RenderGameFrame(open_frame, x, y, 64u, 0, open);
+    const unsigned sample = 48u * LITE_W + LITE_W / 2u;
+    if (closed_frame[sample] > 50u ||
+        open_frame[sample] == closed_frame[sample]) {
+        fprintf(stderr, "door panel missing: closed=%u open=%u\n",
+                closed_frame[sample], open_frame[sample]);
+        return 27;
     }
 
     /* A ray beginning precisely on the WAD door line sees the closed door
@@ -61,9 +80,12 @@ static int check_game_portals(void) {
     const RayHit boundary_open = cast_game_ray(832 * 256, 512 * 256,
                                                256u, open);
     if (boundary_shut.distance_q8 != 0u ||
-        boundary_open.distance_q8 < 16u * 256u) {
-        fprintf(stderr, "door boundary invalid: closed=%u open=%u Q8\n",
-                boundary_shut.distance_q8, boundary_open.distance_q8);
+        boundary_open.distance_q8 < 16u * 256u ||
+        boundary_shut.door_id != 0u ||
+        boundary_open.door_id != E1M1_PORTAL_NO_DOOR) {
+        fprintf(stderr, "door boundary invalid: closed=%u/%u open=%u/%u Q8\n",
+                boundary_shut.distance_q8, boundary_shut.door_id,
+                boundary_open.distance_q8, boundary_open.door_id);
         return 13;
     }
 
@@ -73,7 +95,9 @@ static int check_game_portals(void) {
     const RayHit side_open = cast_game_ray(880 * 256, 528 * 256,
                                            0u, open);
     if (side_shut.distance_q8 != 16u * 256u ||
-        side_open.distance_q8 != side_shut.distance_q8) {
+        side_open.distance_q8 != side_shut.distance_q8 ||
+        side_shut.door_id != E1M1_PORTAL_NO_DOOR ||
+        side_open.door_id != E1M1_PORTAL_NO_DOOR) {
         fprintf(stderr, "adjacent wall invalid: closed=%u open=%u Q8\n",
                 side_shut.distance_q8, side_open.distance_q8);
         return 14;
@@ -213,6 +237,54 @@ static int check_game_sprites(void) {
     return 0;
 }
 
+static int check_game_map_markers(void) {
+    DoomLiteGame game;
+    uint8_t frame[LITE_W * LITE_H + 16u];
+    uint8_t plain[LITE_W * LITE_H];
+    DoomLiteGame_Init(&game);
+    memset(frame, 0xa5, sizeof(frame));
+    DoomLite_RenderGameFrame(frame + 8u, game.x_q8, game.y_q8,
+                              game.facing, 1, game.door_open);
+    memcpy(plain, frame + 8u, sizeof(plain));
+    DoomLite_RenderGameMapOverlay(frame + 8u, &game);
+    for (unsigned i = 0; i < 8u; ++i) {
+        if (frame[i] != 0xa5 || frame[sizeof(frame) - 1u - i] != 0xa5) {
+            fprintf(stderr, "game map overlay crossed framebuffer bounds\n");
+            return 28;
+        }
+    }
+    /* Door sector 10, blue key THING 87 and exit LINEDEF 407 project to
+     * these known E1M1 map cells. The player starts at (75,51), east-facing. */
+    if (frame[59u * LITE_W + 114u + 8u] != 0u ||
+        frame[59u * LITE_W + 156u + 8u] != 0u ||
+        frame[61u * LITE_W + 156u + 8u] != 250u ||
+        frame[81u * LITE_W + 73u + 8u] != 0u ||
+        frame[51u * LITE_W + 80u + 8u] != 0u) {
+        fprintf(stderr, "game map door/key/exit/heading marks absent\n");
+        return 29;
+    }
+    game.door_open[0] = 1u;
+    game.collected[87u >> 3] |= (uint8_t)(1u << (87u & 7u));
+    game.facing = 64u;
+    DoomLite_RenderGameFrame(frame + 8u, game.x_q8, game.y_q8,
+                              game.facing, 1, game.door_open);
+    DoomLite_RenderGameMapOverlay(frame + 8u, &game);
+    if (frame[59u * LITE_W + 114u + 8u] != 250u ||
+        frame[59u * LITE_W + 156u + 8u] != plain[59u * LITE_W + 156u] ||
+        frame[51u * LITE_W + 80u + 8u] == 0u ||
+        frame[56u * LITE_W + 75u + 8u] != 0u) {
+        fprintf(stderr, "game map state/heading did not update\n");
+        return 30;
+    }
+    DoomLite_RenderFrame(frame + 8u, game.x_q8, game.y_q8, 0u, 1);
+    if (memcmp(frame + 8u, plain, sizeof(plain)) != 0) {
+        fprintf(stderr, "Lite map changed after Game overlay\n");
+        return 31;
+    }
+    printf("game map: doors, key, exit, heading, bounds, Lite isolation passed\n");
+    return 0;
+}
+
 int main(int argc, char **argv) {
     const int game_check = check_game_portals();
     if (game_check) return game_check;
@@ -220,6 +292,8 @@ int main(int argc, char **argv) {
     if (exit_check) return exit_check;
     const int sprite_check = check_game_sprites();
     if (sprite_check) return sprite_check;
+    const int map_check = check_game_map_markers();
+    if (map_check) return map_check;
     for (unsigned angle = 0; angle < 1024u; ++angle) {
         const int actual = sine_q14_fine((uint16_t)angle);
         const double expected = sin((double)angle * (6.283185307179586 / 1024.0)) * 16384.0;
@@ -294,6 +368,27 @@ int main(int argc, char **argv) {
     if (points != 12u) return 4;
     printf("checked %u fine-angle rays and %u rendered views from %u open cells; worst late=%u Q8\n",
            rays, points * 8u, points, worst_late_q8);
+    if (argc > 2 && strcmp(argv[1], "--game-map-preview") == 0) {
+        DoomLiteGame game;
+        DoomLiteGame_Init(&game);
+        if (argc > 3 && strcmp(argv[3], "open") == 0)
+            game.door_open[0] = 1u;
+        if (argc > 3 && strcmp(argv[3], "key-collected") == 0)
+            game.collected[87u >> 3] |= (uint8_t)(1u << (87u & 7u));
+        DoomLite_RenderGameFrame(frame + 8u, game.x_q8, game.y_q8,
+                                  game.facing, 1, game.door_open);
+        DoomLite_RenderGameMapOverlay(frame + 8u, &game);
+        FILE *preview = fopen(argv[2], "wb");
+        if (!preview) return 32;
+        fprintf(preview, "P5\n%d %d\n255\n", LITE_W, LITE_H);
+        if (fwrite(frame + 8u, 1u, LITE_W * LITE_H, preview) !=
+            LITE_W * LITE_H) {
+            fclose(preview);
+            return 33;
+        }
+        if (fclose(preview)) return 34;
+        return 0;
+    }
     if (argc > 2 && strcmp(argv[1], "--game-preview") == 0) {
         DoomLiteGame game;
         DoomLiteGame_Init(&game);
@@ -309,10 +404,22 @@ int main(int argc, char **argv) {
             game.x_q8 = -288 * 256;
             game.y_q8 = 1296 * 256;
             game.facing = 128;
+        } else if (argc > 3 &&
+                   (strcmp(argv[3], "door") == 0 ||
+                    strcmp(argv[3], "door-open") == 0)) {
+            game.x_q8 = 832 * 256;
+            game.y_q8 = 384 * 256;
+            game.facing = 64;
+            if (strcmp(argv[3], "door-open") == 0)
+                game.door_open[0] = 1u;
         }
         DoomLite_RenderGameFrame(frame + 8u, game.x_q8, game.y_q8,
                                   game.facing, 0, game.door_open);
-        DoomLite_RenderGameThings(frame + 8u, &game);
+        /* Keep door previews unobstructed by the nearby starting enemy. */
+        if (argc <= 3 ||
+            (strcmp(argv[3], "door") != 0 &&
+             strcmp(argv[3], "door-open") != 0))
+            DoomLite_RenderGameThings(frame + 8u, &game);
         FILE *preview = fopen(argv[2], "wb");
         if (!preview) return 22;
         fprintf(preview, "P5\n%d %d\n255\n", LITE_W, LITE_H);
