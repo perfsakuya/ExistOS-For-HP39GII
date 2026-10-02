@@ -133,6 +133,27 @@ static void check_all_door_use(void) {
     }
 }
 
+static void check_turn_speed(void) {
+    DoomLiteGame game;
+    DoomLiteGame_Init(&game);
+    const int32_t x = game.x_q8, y = game.y_q8;
+    const uint8_t start = game.facing;
+    for (unsigned tick = 0; tick < 2u * DOOM_LITE_GAME_HZ; ++tick)
+        DoomLiteGame_Step(&game, DL_GAME_RIGHT);
+    /* Two seconds at 73.828125 degrees/s advances 105 of 256 steps. */
+    assert(game.facing == (uint8_t)(start + 105u));
+    for (unsigned tick = 0; tick < 2u * DOOM_LITE_GAME_HZ; ++tick)
+        DoomLiteGame_Step(&game, DL_GAME_LEFT);
+    assert(game.facing == start && game.turn_remainder == 0);
+    for (unsigned tick = 0; tick < 17u; ++tick) {
+        DoomLiteGame_Step(&game, DL_GAME_LEFT);
+        DoomLiteGame_Step(&game, 0);
+        DoomLiteGame_Step(&game, DL_GAME_RIGHT);
+    }
+    assert(game.facing == start && game.turn_remainder == 0);
+    assert(game.x_q8 == x && game.y_q8 == y && game.ammo == 50u);
+}
+
 int main(void) {
     DoomLiteGame game;
     DoomLiteGame_Init(&game);
@@ -143,6 +164,7 @@ int main(void) {
     assert(DoomLiteGame_ThingActive(&game, 88)); /* medium zombieman */
     check_reachability();
     check_all_door_use();
+    check_turn_speed();
 
     for (unsigned i = 0; i < E1M1_DOOR_COUNT; ++i) {
         const E1M1Door *door = &e1m1_doors[i];

@@ -23,11 +23,12 @@ void DoomLite_RenderGameFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
                               uint8_t facing, int map_mode,
                               const uint8_t door_open[E1M1_DOOR_COUNT]);
 
-/* Add the Game-only F5 map's doors, blue key, exit, and heading. Call after
- * RenderGameFrame with map_mode=1, before drawing the HUD. */
-void DoomLite_RenderGameMapOverlay(uint8_t *pixels, const DoomLiteGame *game);
+/* Game map: zoom=1 shows the full map, zoom=2 follows the player at 2x.
+ * The top 16 rows are reserved for the HUD. Includes large objective marks. */
+void DoomLite_RenderGameMap(uint8_t *pixels, const DoomLiteGame *game,
+                            unsigned zoom);
 
-/* Draw simplified, wall-occluded enemies and the blue key over the most
+/* Draw packed Freedoom enemies and the blue key, clipped against walls, over the most
  * recently rendered game scene. Call immediately after RenderGameFrame with
  * map_mode=0 and before drawing the HUD; inactive things are omitted. */
 void DoomLite_RenderGameThings(uint8_t *pixels, const DoomLiteGame *game);

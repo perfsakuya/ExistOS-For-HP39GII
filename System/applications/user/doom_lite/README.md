@@ -11,20 +11,29 @@ tables can be checked against the WAD hash with the `--check` generators.
 
 The MVP has 35 Hz movement and collisions, medium-skill enemy placements,
 health and ammo, a basic pistol and enemy damage, pickups including the blue
-key, door interaction, a map, and the original E1M1 exit switch. Enemies and
-the blue key use compact grayscale silhouettes. AI, sound, animated sectors,
-original textures, and demo-compatible Doom rules are outside this MVP. The
+key, door interaction, a map, and the original E1M1 exit switch. Four enemy
+types and the blue key use one static Freedoom patch each, packed into 4,840
+read-only bytes with transparency and 15 grayscale levels. These patches are
+read directly from flash; no decoded sprite heap is allocated. AI, sound,
+animated sectors, original wall textures, sprite animation, and
+demo-compatible Doom rules are outside this MVP. The
 legacy full Doom apps remain in source but are excluded from the default
 firmware build with `SKYOS_BUILD_LEGACY_DOOM=OFF`; they have a known exit
 freeze risk on this device. `Lite` remains available as a renderer baseline.
 
 Controls: arrows move and turn, F1 shoots, F2 uses a door or switch, F5
 toggles the map, and F6 or ON returns to the application list. The display
+uses 10-pixel-tall status text. In the map, F4 switches between the default
+2x view and full-level overview, with larger key and exit markers. Turning
+advances 1.5 of 256 angle steps per 35 Hz tick (about 73.8 degrees/s), 25%
+slower than the previous build, without changing walking speed. The display
 uses the UI framebuffer and its proven queue barrier without a Doom swap
 zone. Every 32 frames, and for a final partial batch on exit, `DOOMG_PERF`
 records elapsed time, 35 Hz logic ticks, logic/render/LCD totals and maxima
 in both microseconds and milliseconds, frame intervals, dropped ticks,
-position, health, ammo, kills, key, and map state. `DOOMG_BOOT`,
+position, health, ammo, kills, key, and map state. Scene/map, sprite, and HUD
+totals and maxima are also recorded in microseconds to measure each visual
+change independently. `DOOMG_BOOT`,
 `DOOMG_EVENT`, and `DOOMG_EXIT` mark startup, actions, and each exit stage.
 `tools/doom/serial_dashboard.py` parses these records.
 While Game runs, the System PrintTask emits `DOOMG_MEM` every 10 seconds
@@ -45,10 +54,21 @@ within the ROM partition. On the calculator, the user confirmed the scene,
 HUD, movement, F5 map and repeated F6 exits with responsive list keys.
 The first image recorded 899/1381/1874 frames over 34.4/52.7/71.9 seconds
 (about 26 fps per run), zero dropped logic ticks, and complete task exit
-records. A discovered `KEY_F1 == 0` versus no-key sentinel collision caused
-unintended shots when direction keys were released; the corrected input path
-still needs hardware verification. Intentional F1 shooting, F2 doors, the
-blue key and the exit switch have only host-simulation coverage so far.
+records. The door/map/input-fix image then recorded 1,939 frames in 76.043
+seconds (25.5 fps), zero dropped ticks, one opened door, five kills, enemy
+damage, a correctly blocked blue door, and a complete exit. Ammo remained
+50 during initial movement before deliberate shots. The user confirmed
+normal scenes and exit. The enlarged HUD/map, slower turning, and packed
+sprite image then recorded 2,829 frames in 115.084 seconds (24.58 fps), zero
+dropped logic ticks, seven kills, a blue-key pickup, and all five exit
+stages. The user confirmed that the HUD and map are readable and that the
+blue key was obtained. Across batches labelled as 3D, scene, sprites, HUD,
+and LCD submission averaged 19.775, 0.075, 0.757, and 12.775 ms per frame.
+The longest observed interval was 126 ms, so these results establish an
+average above 10 fps, not a guarantee that every frame meets 100 ms. The
+per-phase records are available in `freedoom-game-sprites-large-ui-hardware.log`.
+Blue-door unlocking, level completion, and game-over/reset still need
+hardware coverage. Mode-switch batches can contain both map and 3D frames.
 
 This is a small, native E1M1 walk-through built for a 10+ fps target on the
 HP 39gII. The wall layout is generated from the freely licensed Freedoom

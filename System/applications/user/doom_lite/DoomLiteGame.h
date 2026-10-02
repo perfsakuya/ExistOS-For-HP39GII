@@ -35,6 +35,7 @@ typedef struct {
     uint32_t ticks;
     uint16_t kills, total_enemies;
     uint8_t facing; /* 256 steps/turn; 0 points along +X. */
+    int8_t turn_remainder; /* Signed half-step retained between turns. */
     uint8_t health, ammo, blue_key, completed;
     uint8_t door_open[DOOM_LITE_GAME_DOORS];
     uint8_t enemy_hp[DOOM_LITE_GAME_THINGS]; /* 0 means dead/non-enemy. */

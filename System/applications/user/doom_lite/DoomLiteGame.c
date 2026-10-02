@@ -416,8 +416,15 @@ uint32_t DoomLiteGame_Step(DoomLiteGame *game, uint16_t buttons) {
     const uint16_t pressed = buttons & ~game->previous_buttons;
     game->previous_buttons = (uint8_t)buttons;
     if (game->completed || !game->health) return 0;
-    if (!!(buttons & DL_GAME_LEFT) != !!(buttons & DL_GAME_RIGHT))
-        game->facing += (buttons & DL_GAME_LEFT) ? (uint8_t)-2 : 2u;
+    if (!!(buttons & DL_GAME_LEFT) != !!(buttons & DL_GAME_RIGHT)) {
+        /* 1.5 angle steps/tic is 25% slower than the original two. Keep
+         * signed half-steps so opposite turns cancel without angle drift. */
+        const int half_steps = game->turn_remainder +
+                               ((buttons & DL_GAME_LEFT) ? -3 : 3);
+        const int whole_steps = half_steps / 2;
+        game->facing = (uint8_t)(game->facing + whole_steps);
+        game->turn_remainder = (int8_t)(half_steps - whole_steps * 2);
+    }
 
     uint32_t events = 0;
     if (!!(buttons & DL_GAME_UP) != !!(buttons & DL_GAME_DOWN)) {

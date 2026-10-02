@@ -48,6 +48,9 @@
   <div class="metric"><div class="label">E1M1 Game 帧率</div><div class="value" id="gamefps">—</div></div>
   <div class="metric"><div class="label">Game 逻辑 tic 均 / 峰</div><div class="value" id="gamelogic">—</div></div>
   <div class="metric"><div class="label">Game 渲染 均 / 峰</div><div class="value" id="gamerender">—</div></div>
+  <div class="metric"><div class="label">Game 墙面 / 地图 均 / 峰</div><div class="value" id="gamescene">—</div></div>
+  <div class="metric"><div class="label">Game 怪物 / 道具 均 / 峰</div><div class="value" id="gamesprite">—</div></div>
+  <div class="metric"><div class="label">Game UI 均 / 峰</div><div class="value" id="gamehud">—</div></div>
   <div class="metric"><div class="label">Game LCD 均 / 峰</div><div class="value" id="gamelcd">—</div></div>
   <div class="metric"><div class="label">Game 帧间隔 均 / 峰</div><div class="value" id="gameinterval">—</div></div>
 </div>
@@ -93,6 +96,9 @@ async function refresh() {
     byId('gamefps').textContent = s.game ? `${s.game.fps} fps` : '—';
     byId('gamelogic').textContent = s.game ? `${s.game.logic_ms ?? '—'} / ${s.game.logic_max_ms} ms` : '—';
     byId('gamerender').textContent = s.game ? `${s.game.render_ms} / ${s.game.render_max_ms} ms` : '—';
+    for (const phase of ['scene', 'sprite', 'hud'])
+      byId(`game${phase}`).textContent = s.game?.[`${phase}_ms`] != null
+        ? `${s.game[`${phase}_ms`]} / ${s.game[`${phase}_max_ms`]} ms` : '—';
     byId('gamelcd').textContent = s.game ? `${s.game.lcd_ms} / ${s.game.lcd_max_ms} ms` : '—';
     byId('gameinterval').textContent = s.game ? `${s.game.interval_ms} / ${s.game.interval_max_ms} ms` : '—';
     byId('gamestate').textContent = s.game

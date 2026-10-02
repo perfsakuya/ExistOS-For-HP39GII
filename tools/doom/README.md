@@ -28,6 +28,12 @@ run `test_lite_game_data.py`, `test_lite_portals.py`, `check_lite_game.c`,
 `check_lite_exit.c`, and `check_lite_rays.c` on the host. See the Lite README
 for game controls, scope, and the `DOOMG_PERF` log fields.
 
+`build_lite_sprites.py` extracts four enemy front frames and the blue key
+from that verified WAD into `E1M1Sprites.h`. Run it with `--check` and run
+`test_lite_sprites.py` before packaging images that use these assets. They
+retain the Freedoom `COPYING.txt` and `CREDITS.txt` attribution; only 4,840
+packed grayscale bytes are linked instead of the full WAD.
+
 ## Live serial debugging
 
 The calculator exposes a 9600-baud USB serial port while System is running.
