@@ -16,6 +16,10 @@ MEM_RE = re.compile(r"Allocate MEM:(\d+)/(\d+) KB")
 ZRAM_RE = re.compile(r"ZRAM:(\d+)/(\d+) KB")
 ERROR_RE = re.compile(r"DOOM_ERROR ([^\r\n]+)")
 FRAME_RE = re.compile(r"DOOM_FRAME count=(\d+)")
+PERF_RE = re.compile(
+    r"DOOM_PERF frames=(\d+) wall_ms=(\d+) convert_ms=(\d+) "
+    r"display_ms=(\d+) other_ms=(\d+)"
+)
 
 
 def state():
@@ -24,8 +28,10 @@ def state():
     mem = [(int(a), int(b)) for a, b in MEM_RE.findall(raw)]
     zram = [(int(a), int(b)) for a, b in ZRAM_RE.findall(raw)]
     errors = ERROR_RE.findall(raw)
-    frames = FRAME_RE.findall(raw)
     last_start = raw.rfind("DOOM_START")
+    frames = FRAME_RE.findall(raw[last_start:] if last_start >= 0 else "")
+    perf = PERF_RE.findall(raw[last_start:] if last_start >= 0 else "")
+    last_perf = [int(value) for value in perf[-1]] if perf else None
     last_exit = raw.rfind("DOOM_EXIT")
     last_zone = raw.rfind("DOOM_ZONE backing")
     last_verified = raw.rfind("DOOM_ZONE verified")
@@ -51,8 +57,15 @@ def state():
         "stage": stage,
         "zone_verified": raw.count("DOOM_ZONE verified"),
         "errors": len(errors),
-        "frames": raw.count("DOOM_FRAME"),
+        "frames": len(frames),
         "latest_frame": int(frames[-1]) if frames else 0,
+        "performance": {
+            "fps": round(last_perf[0] * 1000 / last_perf[1], 2) if last_perf[1] else None,
+            "total_ms": round(last_perf[1] / last_perf[0]),
+            "convert_ms": round(last_perf[2] / last_perf[0]),
+            "display_ms": round(last_perf[3] / last_perf[0]),
+            "other_ms": round(last_perf[4] / last_perf[0]),
+        } if last_perf and last_perf[0] else None,
         "exits": raw.count("DOOM_EXIT"),
         "panics": raw.lower().count("system panic"),
         "latest_error": errors[-1] if errors else None,

@@ -36,6 +36,14 @@ static volatile int app_running;
 static uint16_t previous_key;
 static int previous_code;
 static unsigned frames;
+static uint8_t gray_palette[256];
+static const byte *gray_palette_source;
+static uint8_t gray_palette_ready;
+static uint32_t last_frame_ms;
+static uint32_t perf_wall_ms;
+static uint32_t perf_convert_ms;
+static uint32_t perf_display_ms;
+static unsigned perf_samples;
 
 /* The display FIFO has four entries. Five one-pixel requests issued after
  * the scene force its source buffer to have been consumed before reuse. */
@@ -49,13 +57,32 @@ int SkyOS_DoomGetTics(void) {
     return (int)((ms / 1000u) * TICRATE + ((ms % 1000u) * TICRATE) / 1000u);
 }
 
-void I_InitScreen_e32(void) { previous_key = 0; previous_code = 0; frames = 0; }
+void I_InitScreen_e32(void) {
+    previous_key = 0;
+    previous_code = 0;
+    frames = 0;
+    gray_palette_source = NULL;
+    gray_palette_ready = 0;
+    last_frame_ms = 0;
+    perf_wall_ms = perf_convert_ms = perf_display_ms = 0;
+    perf_samples = 0;
+}
 void I_CreateBackBuffer_e32(void) { memset(game_pixels, 0, DOOM_PIXELS * sizeof(*game_pixels)); }
 int I_GetVideoWidth_e32(void) { return DOOM_WIDTH; }
 int I_GetVideoHeight_e32(void) { return DOOM_HEIGHT; }
 unsigned short *I_GetBackBuffer(void) { return game_pixels; }
 unsigned short *I_GetFrontBuffer(void) { return game_pixels; }
-void I_SetPallete_e32(const byte *palette) { (void)palette; }
+void I_SetPallete_e32(const byte *palette) {
+    for (unsigned i = 0; i < 256u; ++i) {
+        gray_palette[i] = palette
+            ? (uint8_t)((palette[3u * i] * 77u +
+                         palette[3u * i + 1u] * 150u +
+                         palette[3u * i + 2u] * 29u) >> 8)
+            : (uint8_t)i;
+    }
+    gray_palette_source = palette;
+    gray_palette_ready = 1;
+}
 
 static int map_key(uint16_t key) {
     switch (key) {
@@ -93,18 +120,33 @@ void I_ProcessKeyEvents(void) {
 void I_FinishUpdate_e32(const byte *source, const byte *palette,
                         unsigned width, unsigned height) {
     if (width != DOOM_WIDTH || height != DOOM_HEIGHT) I_Error("screen size");
+    const uint32_t convert_start_ms = ll_get_time_ms();
+    if (!gray_palette_ready || palette != gray_palette_source)
+        I_SetPallete_e32(palette);
     const unsigned short *pixels = (const unsigned short *)source;
-    for (unsigned i = 0; i < DOOM_PIXELS; ++i) {
-        const unsigned color = pixels[i] & 255u;
-        lcd_pixels[i] = palette
-            ? (uint8_t)((palette[3u * color] * 77u +
-                         palette[3u * color + 1u] * 150u +
-                         palette[3u * color + 2u] * 29u) >> 8)
-            : (uint8_t)color;
-    }
+    for (unsigned i = 0; i < DOOM_PIXELS; ++i)
+        lcd_pixels[i] = gray_palette[pixels[i] & 255u];
+    const uint32_t display_start_ms = ll_get_time_ms();
     ll_disp_put_area(lcd_pixels, DOOM_X, DOOM_Y,
                      DOOM_X + DOOM_WIDTH - 1u, DOOM_Y + DOOM_HEIGHT - 1u);
     display_barrier();
+    const uint32_t frame_done_ms = ll_get_time_ms();
+    if (last_frame_ms) {
+        perf_wall_ms += frame_done_ms - last_frame_ms;
+        perf_convert_ms += display_start_ms - convert_start_ms;
+        perf_display_ms += frame_done_ms - display_start_ms;
+        if (++perf_samples == 16u) {
+            const uint32_t other_ms = perf_wall_ms > perf_convert_ms + perf_display_ms
+                ? perf_wall_ms - perf_convert_ms - perf_display_ms : 0u;
+            printf("DOOM_PERF frames=%u wall_ms=%lu convert_ms=%lu display_ms=%lu other_ms=%lu\n",
+                   perf_samples, (unsigned long)perf_wall_ms,
+                   (unsigned long)perf_convert_ms, (unsigned long)perf_display_ms,
+                   (unsigned long)other_ms);
+            perf_wall_ms = perf_convert_ms = perf_display_ms = 0;
+            perf_samples = 0;
+        }
+    }
+    last_frame_ms = frame_done_ms;
     if (++frames % 64u == 0u)
         printf("DOOM_FRAME count=%u allocated=%lu\n", frames,
                (unsigned long)getHeapAllocateSize());
@@ -135,6 +177,11 @@ static void doom_task(void *unused) {
         printf("DOOM_ERROR lcd framebuffer\n");
         goto done;
     }
+    // The renderer only updates the central 120 x 120 area. Remove the
+    // suspended UI from the unused LCD area before the first game frame.
+    memset(game_pixels, 0, LCD_PIX_W * LCD_PIX_H);
+    ll_disp_put_area((uint8_t *)game_pixels, 0, 0, LCD_PIX_W - 1u, LCD_PIX_H - 1u);
+    display_barrier();
     while (ll_vm_check_key() >> 16) vTaskDelay(pdMS_TO_TICKS(20));
     printf("DOOM_START allocated=%lu\n", (unsigned long)getHeapAllocateSize());
 

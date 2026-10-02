@@ -4,7 +4,8 @@ This is a native, single-level Doom engine port for the HP 39gII. It uses the
 GBADoom engine with a trimmed and converted Freedoom Phase 1 v0.13.0 IWAD.
 The game data is free software; no id Software game WAD is included.
 
-The 120 × 120 renderer is centered on the 256 × 127 grayscale LCD. Sound,
+The 120 × 120 renderer is centered on the 256 × 127 grayscale LCD; the unused
+area is cleared when the game starts. Sound,
 music, save games, and levels beyond E1M1 are currently disabled. The port
 starts E1M1 directly. F1 fires, F2 uses, F3/F4 strafe, F5 opens the automap,
 Enter opens the in-game menu, the direction pad moves/turns, and F6 or ON
@@ -19,6 +20,10 @@ The zone lies above the System heap with a 64 KiB guard checked at launch.
 Swap remains enabled after exit because dirty pages can still be in the cache.
 All allocation failures and fatal errors are reported on the USB serial
 console. The exit path frees the conversion buffer and resumes the System UI.
+The LCD palette is converted to a 256-entry grayscale lookup table only when
+the game changes palettes. Serial output includes `DOOM_PERF` every 16 frames:
+the wall time and time spent converting pixels and submitting LCD updates.
+The remaining time includes engine work, VM swap, and serial overhead.
 
 The embedded data file was produced from `freedoom1.wad` in the official
 Freedoom 0.13.0 release using `tools/doom/trim_e1m1.py`, GBADoom's
@@ -41,9 +46,12 @@ System image with the original 6 MB loader.
 - The first native image launched the Doom task but exited before its first
   frame: all three on-chip zone allocations failed. The serial log showed
   `EXT HEAP NOMEM` and `DOOM_ERROR Doom zone allocation failed`, with no Panic.
-- The swap-backed zone image compiles with GNU Arm Embedded Toolchain
-  10.3-2021.10 and passed the System image size check. Physical gameplay
-  validation is pending.
+- The swap-backed zone image boots and runs E1M1 on physical hardware. The
+  initial 120 × 120 build left the suspended application list visible around
+  the game and ran below 2 fps. It emitted frame counters without a Panic.
+- The palette lookup and screen-clear build compiles with GNU Arm Embedded
+  Toolchain 10.3-2021.10 and passes the System image size check. Hardware
+  performance measurements for this revision are pending.
 
 The application needs a separate hardware launch test after flashing. If
 `DOOM_ERROR` appears or the device panics, collect the serial log and screen
