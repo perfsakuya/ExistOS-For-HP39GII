@@ -18,6 +18,8 @@
 #define GAME_MAX_DELTA_US 250000u
 #define GAME_MAX_CATCHUP_TICS 6u
 #define GAME_PERF_FRAMES 32u
+/* KEY_F1 is 0, so an unpressed keyboard must use a distinct value. */
+#define GAME_NO_KEY UINT16_MAX
 
 volatile int SkyOS_DoomGameRunning;
 static DoomLiteGame game_state;
@@ -226,7 +228,7 @@ static void doom_game_task(void *unused) {
     uint32_t accumulator = 0u;
     uint32_t message_until_tick = 0u;
     const char *message = NULL;
-    uint16_t previous_key = 0u;
+    uint16_t previous_key = GAME_NO_KEY;
     uint16_t pending_actions = 0u;
     unsigned total_frames = 0u;
     int map_mode = 0;
@@ -243,7 +245,7 @@ static void doom_game_task(void *unused) {
         accumulator += elapsed_us * GAME_TIC_SCALE;
 
         const uint32_t raw_key = ll_vm_check_key();
-        const uint16_t key = raw_key >> 16 ? (uint16_t)raw_key : 0u;
+        const uint16_t key = raw_key >> 16 ? (uint16_t)raw_key : GAME_NO_KEY;
         if (key == KEY_F6 || key == KEY_ON) break;
         if (key == KEY_F5 && previous_key != KEY_F5) {
             map_mode = !map_mode;

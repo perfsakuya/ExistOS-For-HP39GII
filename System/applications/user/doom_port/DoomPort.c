@@ -27,6 +27,7 @@
 #define DOOM_LCD_WIDTH (DOOM_WIDTH * 2u)
 #define DOOM_LCD_PIXELS (DOOM_LCD_WIDTH * DOOM_HEIGHT)
 #define DOOM_FRAME_GUARD 4096u
+#define DOOM_NO_KEY UINT16_MAX /* KEY_F1 is zero; zero cannot mean no key. */
 #define DOOM_X ((LCD_PIX_W - DOOM_LCD_WIDTH) / 2u)
 #define DOOM_Y ((LCD_PIX_H - DOOM_HEIGHT) / 2u)
 
@@ -245,7 +246,7 @@ void SkyOS_DoomProfileRender(unsigned setup_ms, unsigned bsp_ms,
 
 void I_InitScreen_e32(void) {
     exit_requested = 0;
-    previous_key = 0;
+    previous_key = DOOM_NO_KEY;
     previous_code = 0;
     frames = 0;
     gray_palette_source = NULL;
@@ -302,7 +303,7 @@ static void post_key(evtype_t type, int code) {
 
 void I_ProcessKeyEvents(void) {
     const uint32_t raw = ll_vm_check_key();
-    const uint16_t key = raw >> 16 ? (uint16_t)raw : 0;
+    const uint16_t key = raw >> 16 ? (uint16_t)raw : DOOM_NO_KEY;
     if (key == KEY_F6 || key == KEY_ON) {
         // Return from the engine loop at a frame boundary. Jumping out of
         // I_StartTic skips callers that may still be updating engine state.

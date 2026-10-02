@@ -35,11 +35,13 @@ must not be read as live allocation.
 
 Host geometry and gameplay checks pass, and the ARM System image builds
 within the ROM partition. On the calculator, the user confirmed the scene,
-HUD, movement, shooting, F5 map and three F6 exits with responsive list
-keys. The serial log recorded 899/1381/1874 frames over 34.4/52.7/71.9
-seconds (about 26 fps per run), zero dropped logic ticks, and complete
-task exit records. F2 doors, the blue key and the exit switch have only
-host-simulation coverage so far.
+HUD, movement, F5 map and repeated F6 exits with responsive list keys.
+The first image recorded 899/1381/1874 frames over 34.4/52.7/71.9 seconds
+(about 26 fps per run), zero dropped logic ticks, and complete task exit
+records. A discovered `KEY_F1 == 0` versus no-key sentinel collision caused
+unintended shots when direction keys were released; the corrected input path
+still needs hardware verification. Intentional F1 shooting, F2 doors, the
+blue key and the exit switch have only host-simulation coverage so far.
 
 This is a small, native E1M1 walk-through built for a 10+ fps target on the
 HP 39gII. The wall layout is generated from the freely licensed Freedoom
