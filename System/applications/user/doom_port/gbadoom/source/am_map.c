@@ -52,6 +52,24 @@
 #include "global_data.h"
 
 
+#ifdef SKYOS
+// The LCD is grayscale. Use PLAYPAL entries that form a light paper map
+// with dark geometry; the upstream color map is too dim on this display.
+static const int mapcolor_back = 208;   // white background
+static const int mapcolor_wall = 0;     // black walls
+static const int mapcolor_fchg = 104;   // dark gray floor change
+static const int mapcolor_cchg = 104;   // dark gray ceiling change
+static const int mapcolor_clsd = 23;    // medium gray closed sector
+static const int mapcolor_rdor = 23;
+static const int mapcolor_bdor = 104;
+static const int mapcolor_ydor = 104;
+static const int mapcolor_tele = 104;
+static const int mapcolor_secr = 23;
+static const int mapcolor_exit = 0;
+static const int mapcolor_unsn = 104;
+static const int mapcolor_flat = 104;
+static const int mapcolor_sngl = 0;     // black player arrow
+#else
 static const int mapcolor_back = 247;    // map background
 static const int mapcolor_wall = 23;    // normal 1s wall color
 static const int mapcolor_fchg = 55;    // line at floor height change color
@@ -66,6 +84,7 @@ static const int mapcolor_exit = 0;    // jff 4/23/98 add exit line color
 static const int mapcolor_unsn = 104;    // computer map unseen line color
 static const int mapcolor_flat = 88;    // line with no floor/ceiling changes
 static const int mapcolor_sngl = 208;    // single player arrow color
+#endif
 static const int map_secret_after = 0;
 
 static const int f_w = (SCREENWIDTH*2);

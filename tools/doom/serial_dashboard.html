@@ -38,6 +38,7 @@
   <div class="metric"><div class="label">平均每帧耗时</div><div class="value" id="frametime">—</div></div>
 </div>
 <div class="events"><span id="logic">游戏逻辑 —</span><span id="draw">绘制含显示 —</span><span id="convert">灰度转换 —</span><span id="display">显示提交 —</span><span id="other">引擎及其他 —</span></div>
+<div class="events"><span id="setup">视角准备 —</span><span id="bsp">墙面/BSP —</span><span id="planes">地板/天花板 —</span><span id="masked">精灵/遮挡 —</span></div>
 <div class="events" aria-live="polite"><span id="stage">等待启动</span><span id="starts">启动 0</span><span id="zone">交换区校验 0</span><span id="frames">最新帧 0</span><span id="exits">退出 0</span><span id="errors">错误 0</span><span id="panics">Panic 0</span></div>
 <div id="fault" class="fault" role="status"></div>
 <h2>内存变化 · KB</h2><svg viewBox="0 0 400 90" preserveAspectRatio="none" aria-label="最近 40 次 System 内存采样"><polyline id="memory-line" points=""></polyline></svg>
@@ -67,6 +68,10 @@ async function refresh() {
     byId('convert').textContent = `灰度转换 ${s.performance?.convert_ms ?? '—'} ms`;
     byId('display').textContent = `显示提交 ${s.performance?.display_ms ?? '—'} ms`;
     byId('other').textContent = `引擎及其他 ${s.performance?.other_ms ?? '—'} ms`;
+    byId('setup').textContent = `视角准备 ${s.render?.setup_ms ?? '—'} ms`;
+    byId('bsp').textContent = `墙面/BSP ${s.render?.bsp_ms ?? '—'} ms`;
+    byId('planes').textContent = `地板/天花板 ${s.render?.planes_ms ?? '—'} ms`;
+    byId('masked').textContent = `精灵/遮挡 ${s.render?.masked_ms ?? '—'} ms`;
     byId('starts').textContent = `启动 ${s.starts}`;
     byId('stage').textContent = s.stage;
     byId('zone').textContent = `交换区校验 ${s.zone_verified}`;

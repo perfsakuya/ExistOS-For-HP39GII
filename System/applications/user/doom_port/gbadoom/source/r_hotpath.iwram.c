@@ -2922,6 +2922,12 @@ static void R_ClearPlanes(void)
 //
 void R_RenderPlayerView (player_t* player)
 {
+#ifdef SKYOS
+    extern unsigned SkyOS_DoomNowMs(void);
+    extern void SkyOS_DoomProfileRender(unsigned setup_ms, unsigned bsp_ms,
+                                       unsigned planes_ms, unsigned masked_ms);
+    const unsigned setup_start_ms = SkyOS_DoomNowMs();
+#endif
     R_SetupFrame (player);
 
     // Clear buffers.
@@ -2930,12 +2936,27 @@ void R_RenderPlayerView (player_t* player)
     R_ClearPlanes ();
     R_ClearSprites ();
 
+#ifdef SKYOS
+    const unsigned bsp_start_ms = SkyOS_DoomNowMs();
+#endif
     // The head node is the last node output.
     R_RenderBSPNode (numnodes-1);
 
+#ifdef SKYOS
+    const unsigned planes_start_ms = SkyOS_DoomNowMs();
+#endif
     R_DrawPlanes ();
 
+#ifdef SKYOS
+    const unsigned masked_start_ms = SkyOS_DoomNowMs();
+#endif
     R_DrawMasked ();
+#ifdef SKYOS
+    SkyOS_DoomProfileRender(bsp_start_ms - setup_start_ms,
+                           planes_start_ms - bsp_start_ms,
+                           masked_start_ms - planes_start_ms,
+                           SkyOS_DoomNowMs() - masked_start_ms);
+#endif
 }
 
 void V_DrawPatchNoScale(int x, int y, const patch_t* patch)

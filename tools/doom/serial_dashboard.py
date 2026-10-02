@@ -21,6 +21,10 @@ PERF_RE = re.compile(
     r"display_ms=(\d+) other_ms=(\d+)"
 )
 PHASE_RE = re.compile(r"DOOM_PHASE frames=(\d+) logic_ms=(\d+) draw_ms=(\d+)")
+RENDER_RE = re.compile(
+    r"DOOM_RENDER frames=(\d+) setup_ms=(\d+) bsp_ms=(\d+) "
+    r"planes_ms=(\d+) masked_ms=(\d+)"
+)
 
 
 def state():
@@ -35,7 +39,10 @@ def state():
     last_perf = [int(value) for value in perf[-1]] if perf else None
     phases = PHASE_RE.findall(raw[last_start:] if last_start >= 0 else "")
     last_phase = [int(value) for value in phases[-1]] if phases else None
+    renders = RENDER_RE.findall(raw[last_start:] if last_start >= 0 else "")
+    last_render = [int(value) for value in renders[-1]] if renders else None
     last_exit = raw.rfind("DOOM_EXIT")
+    last_cleanup_done = raw.rfind("DOOM_CLEANUP ui_resumed")
     last_zone = raw.rfind("DOOM_ZONE backing")
     last_verified = raw.rfind("DOOM_ZONE verified")
     last_status = raw.rfind("=============SYSTEM STATUS")
@@ -44,7 +51,7 @@ def state():
     if last_start < 0:
         stage = "等待启动"
     elif last_exit > last_start:
-        stage = "已退出"
+        stage = "已退出" if last_cleanup_done > last_exit else "退出清理中"
     elif last_status > last_start and not doom_task_visible:
         stage = "应用界面"
     elif last_verified > last_start:
@@ -78,6 +85,12 @@ def state():
             "logic_ms": round(last_phase[1] / last_phase[0]),
             "draw_ms": round(last_phase[2] / last_phase[0]),
         } if last_phase and last_phase[0] else None,
+        "render": {
+            "setup_ms": round(last_render[1] / last_render[0]),
+            "bsp_ms": round(last_render[2] / last_render[0]),
+            "planes_ms": round(last_render[3] / last_render[0]),
+            "masked_ms": round(last_render[4] / last_render[0]),
+        } if last_render and last_render[0] else None,
         "exits": raw.count("DOOM_EXIT"),
         "panics": raw.lower().count("system panic"),
         "latest_error": errors[-1] if errors else None,

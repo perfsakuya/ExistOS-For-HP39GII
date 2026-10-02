@@ -23,13 +23,17 @@
 #define DOOM_WIDTH 120u
 #define DOOM_HEIGHT 120u
 #define DOOM_PIXELS (DOOM_WIDTH * DOOM_HEIGHT)
-#define DOOM_X ((LCD_PIX_W - DOOM_WIDTH) / 2u)
+#define DOOM_LCD_WIDTH (DOOM_WIDTH * 2u)
+#define DOOM_LCD_PIXELS (DOOM_LCD_WIDTH * DOOM_HEIGHT)
+#define DOOM_FRAME_GUARD 4096u
+#define DOOM_X ((LCD_PIX_W - DOOM_LCD_WIDTH) / 2u)
 #define DOOM_Y ((LCD_PIX_H - DOOM_HEIGHT) / 2u)
 
 extern uint32_t getHeapAllocateSize(void);
 extern void *mainzone;
 
 static unsigned short *game_pixels;
+static uint8_t *game_buffer_allocation;
 static uint8_t *lcd_pixels;
 static jmp_buf app_exit;
 static volatile int app_running;
@@ -47,12 +51,34 @@ static unsigned perf_samples;
 static uint32_t phase_logic_ms;
 static uint32_t phase_draw_ms;
 static unsigned phase_samples;
+static uint32_t render_setup_ms;
+static uint32_t render_bsp_ms;
+static uint32_t render_planes_ms;
+static uint32_t render_masked_ms;
+static unsigned render_samples;
 
 /* The display FIFO has four entries. Five one-pixel requests issued after
  * the scene force its source buffer to have been consumed before reuse. */
 static void display_barrier(void) {
     for (unsigned i = 0; i < 5; ++i)
         ll_disp_put_area((uint8_t *)game_pixels, 0, 0, 0, 0);
+}
+
+static int check_game_buffer(void) {
+    if (!game_buffer_allocation) return 1;
+    const uint8_t *before = game_buffer_allocation;
+    const uint8_t *after = (const uint8_t *)game_pixels + DOOM_LCD_PIXELS;
+    for (unsigned i = 0; i < DOOM_FRAME_GUARD; ++i) {
+        if (before[i] != 0xa5u) {
+            printf("DOOM_GUARD underrun offset=%u value=%u\n", i, before[i]);
+            return 0;
+        }
+        if (after[i] != 0xa5u) {
+            printf("DOOM_GUARD overrun offset=%u value=%u\n", i, after[i]);
+            return 0;
+        }
+    }
+    return 1;
 }
 
 int SkyOS_DoomGetTics(void) {
@@ -74,6 +100,22 @@ void SkyOS_DoomProfilePhases(unsigned logic_ms, unsigned draw_ms) {
     }
 }
 
+void SkyOS_DoomProfileRender(unsigned setup_ms, unsigned bsp_ms,
+                            unsigned planes_ms, unsigned masked_ms) {
+    render_setup_ms += setup_ms;
+    render_bsp_ms += bsp_ms;
+    render_planes_ms += planes_ms;
+    render_masked_ms += masked_ms;
+    if (++render_samples == 16u) {
+        printf("DOOM_RENDER frames=%u setup_ms=%lu bsp_ms=%lu planes_ms=%lu masked_ms=%lu\n",
+               render_samples, (unsigned long)render_setup_ms,
+               (unsigned long)render_bsp_ms, (unsigned long)render_planes_ms,
+               (unsigned long)render_masked_ms);
+        render_setup_ms = render_bsp_ms = render_planes_ms = render_masked_ms = 0;
+        render_samples = 0;
+    }
+}
+
 void I_InitScreen_e32(void) {
     previous_key = 0;
     previous_code = 0;
@@ -85,6 +127,8 @@ void I_InitScreen_e32(void) {
     perf_samples = 0;
     phase_logic_ms = phase_draw_ms = 0;
     phase_samples = 0;
+    render_setup_ms = render_bsp_ms = render_planes_ms = render_masked_ms = 0;
+    render_samples = 0;
 }
 void I_CreateBackBuffer_e32(void) { memset(game_pixels, 0, DOOM_PIXELS * sizeof(*game_pixels)); }
 int I_GetVideoWidth_e32(void) { return DOOM_WIDTH; }
@@ -139,15 +183,18 @@ void I_ProcessKeyEvents(void) {
 void I_FinishUpdate_e32(const byte *source, const byte *palette,
                         unsigned width, unsigned height) {
     if (width != DOOM_WIDTH || height != DOOM_HEIGHT) I_Error("screen size");
+    if (!check_game_buffer()) I_Error("framebuffer guard");
     const uint32_t convert_start_ms = ll_get_time_ms();
     if (!gray_palette_ready || palette != gray_palette_source)
         I_SetPallete_e32(palette);
-    const unsigned short *pixels = (const unsigned short *)source;
-    for (unsigned i = 0; i < DOOM_PIXELS; ++i)
-        lcd_pixels[i] = gray_palette[pixels[i] & 255u];
+    // The engine writes two palette indices into each 16-bit pixel: the 3D
+    // renderer duplicates them, while the automap and menus draw at 240 px.
+    // Read both bytes so odd columns are not dropped from the LCD output.
+    for (unsigned i = 0; i < DOOM_LCD_PIXELS; ++i)
+        lcd_pixels[i] = gray_palette[source[i]];
     const uint32_t display_start_ms = ll_get_time_ms();
     ll_disp_put_area(lcd_pixels, DOOM_X, DOOM_Y,
-                     DOOM_X + DOOM_WIDTH - 1u, DOOM_Y + DOOM_HEIGHT - 1u);
+                     DOOM_X + DOOM_LCD_WIDTH - 1u, DOOM_Y + DOOM_HEIGHT - 1u);
     display_barrier();
     const uint32_t frame_done_ms = ll_get_time_ms();
     if (last_frame_ms) {
@@ -185,21 +232,35 @@ void I_Error(const char *message, ...) {
 
 static void doom_task(void *unused) {
     (void)unused;
-    game_pixels = (unsigned short *)SystemUIBorrowFrameBuffer();
+    uint8_t *ui_pixels = SystemUIBorrowFrameBuffer();
+    game_pixels = NULL;
+    game_buffer_allocation = NULL;
     lcd_pixels = NULL;
-    if (!game_pixels) {
+    if (!ui_pixels) {
         printf("DOOM_ERROR ui framebuffer\n");
         goto done;
     }
-    lcd_pixels = malloc(DOOM_PIXELS);
+    // A game render must not overwrite objects adjoining the UI framebuffer.
+    // Keep both guards so any engine draw outside 240 x 120 is reported.
+    game_buffer_allocation = malloc(DOOM_LCD_PIXELS + 2u * DOOM_FRAME_GUARD);
+    if (!game_buffer_allocation) {
+        printf("DOOM_ERROR game framebuffer\n");
+        goto done;
+    }
+    memset(game_buffer_allocation, 0xa5,
+           DOOM_LCD_PIXELS + 2u * DOOM_FRAME_GUARD);
+    game_pixels = (unsigned short *)(game_buffer_allocation + DOOM_FRAME_GUARD);
+    lcd_pixels = malloc(DOOM_LCD_PIXELS);
     if (!lcd_pixels) {
         printf("DOOM_ERROR lcd framebuffer\n");
         goto done;
     }
-    // The renderer only updates the central 120 x 120 area. Remove the
-    // suspended UI from the unused LCD area before the first game frame.
-    memset(game_pixels, 0, LCD_PIX_W * LCD_PIX_H);
-    ll_disp_put_area((uint8_t *)game_pixels, 0, 0, LCD_PIX_W - 1u, LCD_PIX_H - 1u);
+    printf("DOOM_BUFFERS ui=%p game=%p lcd=%p\n",
+           ui_pixels, game_pixels, lcd_pixels);
+    // Remove the suspended UI from the unused LCD margins before the first
+    // game frame.
+    memset(ui_pixels, 0, LCD_PIX_W * LCD_PIX_H);
+    ll_disp_put_area(ui_pixels, 0, 0, LCD_PIX_W - 1u, LCD_PIX_H - 1u);
     display_barrier();
     while (ll_vm_check_key() >> 16) vTaskDelay(pdMS_TO_TICKS(20));
     printf("DOOM_START allocated=%lu\n", (unsigned long)getHeapAllocateSize());
@@ -220,8 +281,14 @@ static void doom_task(void *unused) {
     _g = NULL;
     display_barrier();
 done:
+    if (game_pixels) check_game_buffer();
     if (lcd_pixels) free(lcd_pixels);
+    if (game_buffer_allocation) free(game_buffer_allocation);
+    game_buffer_allocation = NULL;
+    game_pixels = NULL;
+    printf("DOOM_CLEANUP resuming_ui\n");
     SystemUIResume();
+    printf("DOOM_CLEANUP ui_resumed\n");
     app_running = 0;
     vTaskDelete(NULL);
 }

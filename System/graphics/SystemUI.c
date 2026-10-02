@@ -296,7 +296,9 @@ static TaskHandle_t pUITask;
 void SystemUIInit() {
 
     //UI_Init();
-    xTaskCreate(UI_Task, "UICore", 800, NULL, configMAX_CO_ROUTINE_PRIORITIES - 3, &pUITask);
+    // The 800-word UI stack reached a zero high-water mark on hardware.
+    // Redrawing after an application exits needs headroom for nested widgets.
+    xTaskCreate(UI_Task, "UICore", 2048, NULL, configMAX_CO_ROUTINE_PRIORITIES - 3, &pUITask);
 }
 
 void UI_Resume();

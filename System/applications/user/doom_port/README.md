@@ -4,15 +4,19 @@ This is a native, single-level Doom engine port for the HP 39gII. It uses the
 GBADoom engine with a trimmed and converted Freedoom Phase 1 v0.13.0 IWAD.
 The game data is free software; no id Software game WAD is included.
 
-The 120 × 120 renderer is centered on the 256 × 127 grayscale LCD; the unused
-area is cleared when the game starts. Sound,
+The engine's 120 × 120 16-bit backbuffer contains 240 × 120 palette bytes:
+the 3D renderer duplicates horizontal pixels, while the automap and menus
+use both bytes independently. The bridge shows all 240 × 120 pixels centered
+on the 256 × 127 grayscale LCD; the unused margins are cleared at startup. Sound,
 music, save games, and levels beyond E1M1 are currently disabled. The port
 starts E1M1 directly. F1 fires, F2 uses, F3/F4 strafe, F5 opens the automap,
 Enter opens the in-game menu, the direction pad moves/turns, and F6 or ON
 returns to the application list.
 
-`DoomPort.c` borrows the System UI framebuffer for the engine's 16-bit pixel
-indices and allocates a 14,400-byte grayscale conversion buffer. The engine
+`DoomPort.c` suspends the System UI and uses a private 28,800-byte engine
+framebuffer with guards on both sides. This keeps game drawing away from UI
+objects and detects out-of-bounds writes. It also allocates a 28,800-byte
+grayscale conversion buffer. The engine
 uses a 256 KiB zone at the end of the loader's NAND-backed 3 MiB VM RAM map.
 The port enables VM swap before accessing the zone, then writes and reads every
 1 KiB page to check that eviction through the 40-page RAM cache preserves data.
@@ -26,6 +30,10 @@ the wall time and time spent converting pixels and submitting LCD updates.
 `DOOM_PHASE` separates game logic from drawing, which includes pixel conversion
 and LCD submission. The remaining wall time includes engine work, VM swap,
 and serial overhead.
+`DOOM_RENDER` splits the 3D renderer into view setup, BSP/walls, planes, and
+masked sprite passes. Each counter covers 16 rendered views.
+The SkyOS automap uses a light background and dark line palette for the
+monochrome LCD.
 
 The embedded data file was produced from `freedoom1.wad` in the official
 Freedoom 0.13.0 release using `tools/doom/trim_e1m1.py`, GBADoom's
