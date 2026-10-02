@@ -32,8 +32,10 @@
 <body>
 <div class="top"><h1>HP 39gII · 串口调试</h1><span id="status" class="status">连接中…</span></div>
 <div class="grid">
-  <div class="metric"><div class="label">System 已分配</div><div class="value" id="mem">—</div></div>
-  <div class="metric"><div class="label">ZRAM 占用</div><div class="value" id="zram">—</div></div>
+  <div class="metric"><div class="label">malloc 当前已分配</div><div class="value" id="mem">—</div></div>
+  <div class="metric"><div class="label">ZRAM 池已分配</div><div class="value" id="zram">—</div></div>
+  <div class="metric"><div class="label">SRAM heap 已扩展</div><div class="value" id="sram-pre">—</div></div>
+  <div class="metric"><div class="label">Swap heap 已扩展</div><div class="value" id="swap-pre">—</div></div>
   <div class="metric"><div class="label">Freedoom 帧率</div><div class="value" id="fps">—</div></div>
   <div class="metric"><div class="label">平均每帧耗时</div><div class="value" id="frametime">—</div></div>
   <div class="metric"><div class="label">E1M1 Lite 帧率</div><div class="value" id="litefps">—</div></div>
@@ -57,7 +59,7 @@
 <div class="events" aria-live="polite"><span id="stage">等待启动</span><span id="starts">启动 0</span><span id="zone">交换区校验 0</span><span id="frames">最新帧 0</span><span id="exits">退出 0</span><span id="errors">错误 0</span><span id="panics">Panic 0</span></div>
 <div class="events" aria-live="polite"><span id="diagnostic">退出诊断 —</span></div>
 <div id="fault" class="fault" role="status"></div>
-<h2>内存变化 · KB</h2><svg viewBox="0 0 400 90" preserveAspectRatio="none" aria-label="最近 40 次 System 内存采样"><polyline id="memory-line" points=""></polyline></svg>
+<h2>malloc 已分配变化 · KB</h2><svg viewBox="0 0 400 90" preserveAspectRatio="none" aria-label="最近 40 次内存采样"><polyline id="memory-line" points=""></polyline></svg>
 <div class="toolbar"><h2>原始串口输出</h2><a href="/log" target="_blank" rel="noopener">打开完整日志</a></div>
 <pre id="log" aria-label="最近 120 行串口日志"></pre>
 <script>
@@ -77,6 +79,8 @@ async function refresh() {
     status.className = 'status ' + (s.connected ? 'ok' : 'bad');
     byId('mem').textContent = s.memory_kb ? `${s.memory_kb[0]} / ${s.memory_kb[1]} KB` : '—';
     byId('zram').textContent = s.zram_kb ? `${s.zram_kb[0]} / ${s.zram_kb[1]} KB` : '—';
+    byId('sram-pre').textContent = s.heap_preallocated_kb ? `${s.heap_preallocated_kb[0]} KB` : '—';
+    byId('swap-pre').textContent = s.heap_preallocated_kb ? `${s.heap_preallocated_kb[1]} KB` : '—';
     byId('fps').textContent = s.performance?.fps != null ? `${s.performance.fps} fps` : '—';
     byId('frametime').textContent = s.performance ? `${s.performance.total_ms} ms` : '—';
     byId('litefps').textContent = s.lite ? `${s.lite.fps} fps` : '—';

@@ -1,6 +1,6 @@
 # E1M1 Lite
 
-## E1M1 Game MVP (offline candidate)
+## E1M1 Game MVP
 
 The `Game` application adds a deliberately simplified, E1M1-specific game
 simulation to the Lite renderer. `build_lite_game_data.py` extracts medium
@@ -27,10 +27,19 @@ in both microseconds and milliseconds, frame intervals, dropped ticks,
 position, health, ammo, kills, key, and map state. `DOOMG_BOOT`,
 `DOOMG_EVENT`, and `DOOMG_EXIT` mark startup, actions, and each exit stage.
 `tools/doom/serial_dashboard.py` parses these records.
+While Game runs, the System PrintTask emits `DOOMG_MEM` every 10 seconds
+without collecting the full task table. Its byte fields are `a` (malloc
+allocated/current capacity), `z` (ZRAM pool allocated/capacity), and `s`/`w`
+(SRAM/Swap heap arena extent). The arena extents can stay high after frees and
+must not be read as live allocation.
 
 Host geometry and gameplay checks pass, and the ARM System image builds
-within the ROM partition. The `Game` app has **not** yet been tested on the
-physical calculator; its frame rate and exit reliability remain unverified.
+within the ROM partition. On the calculator, the user confirmed the scene,
+HUD, movement, shooting, F5 map and three F6 exits with responsive list
+keys. The serial log recorded 899/1381/1874 frames over 34.4/52.7/71.9
+seconds (about 26 fps per run), zero dropped logic ticks, and complete
+task exit records. F2 doors, the blue key and the exit switch have only
+host-simulation coverage so far.
 
 This is a small, native E1M1 walk-through built for a 10+ fps target on the
 HP 39gII. The wall layout is generated from the freely licensed Freedoom

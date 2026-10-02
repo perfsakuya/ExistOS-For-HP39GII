@@ -15,6 +15,11 @@ SERIAL_NAME = "串口"
 
 MEM_RE = re.compile(r"Allocate MEM:(\d+)/(\d+) KB")
 ZRAM_RE = re.compile(r"ZRAM:(\d+)/(\d+) KB")
+SRAM_PRE_RE = re.compile(r"SRAM Heap Pre-allocated: (\d+) KB")
+SWAP_PRE_RE = re.compile(r"Swap Heap Pre-allocated: (\d+) KB")
+GAME_MEM_RE = re.compile(
+    r"(?m)^DOOMG_MEM a=(\d+)/(\d+) z=(\d+)/(\d+) s=(\d+) w=(\d+)\r?$"
+)
 ERROR_RE = re.compile(r"DOOM_ERROR ([^\r\n]+)")
 FRAME_RE = re.compile(r"DOOM_FRAME count=(\d+)")
 PERF_RE = re.compile(
@@ -81,8 +86,12 @@ def state():
     log = current_log()
     raw = log.read_text(encoding="ascii", errors="replace") if log.exists() else ""
     lines = raw.splitlines()
-    mem = [(int(a), int(b)) for a, b in MEM_RE.findall(raw)]
-    zram = [(int(a), int(b)) for a, b in ZRAM_RE.findall(raw)]
+    mem = [(m.start(), int(m[1]), int(m[2])) for m in MEM_RE.finditer(raw)]
+    zram = [(m.start(), int(m[1]), int(m[2])) for m in ZRAM_RE.finditer(raw)]
+    sram_pre = SRAM_PRE_RE.findall(raw)
+    swap_pre = SWAP_PRE_RE.findall(raw)
+    game_mem = [(m.start(), *(int(value) for value in m.groups()))
+                for m in GAME_MEM_RE.finditer(raw)]
     last_start = raw.rfind("DOOM_START")
     last_lite_perf = raw.rfind("DOOMLITE_PERF")
     last_lite_exit = raw.rfind("DOOMLITE_EXIT")
@@ -105,6 +114,34 @@ def state():
     game_perf = latest_fields(GAME_PERF_RE, game_run)
     game_boot = GAME_BOOT_RE.findall(game_run)
     game_exits = GAME_EXIT_RE.findall(game_run)
+    latest_system_mem = mem[-1][0] if mem else -1
+    latest_game_mem = next((sample for sample in reversed(game_mem)
+                            if sample[0] >= last_game_boot), None)
+    latest_game_mem_position = latest_game_mem[0] if latest_game_mem else -1
+    if (mode == "game" and last_game_exit >= last_game_boot and
+            last_game_exit > max(latest_game_mem_position, latest_system_mem)):
+        # The Game has exited, but the next System status sample has not arrived.
+        memory_kb = zram_kb = heap_preallocated_kb = None
+    elif mode == "game" and latest_game_mem and latest_game_mem[0] > latest_system_mem:
+        _, allocated, capacity, zram_used, zram_capacity, sram_pre, swap_pre = latest_game_mem
+        memory_kb = (round(allocated / 1024, 2), round(capacity / 1024, 2))
+        zram_kb = (round(zram_used / 1024, 2), round(zram_capacity / 1024, 2))
+        heap_preallocated_kb = (round(sram_pre / 1024, 2), round(swap_pre / 1024, 2))
+    elif mode == "game" and latest_system_mem < last_game_boot:
+        # The running Game intentionally suppresses the old System status dump.
+        # Do not present a pre-launch value as a live sample.
+        memory_kb = zram_kb = heap_preallocated_kb = None
+    else:
+        memory_kb = mem[-1][1:] if mem else None
+        zram_kb = zram[-1][1:] if zram else None
+        heap_preallocated_kb = (int(sram_pre[-1]), int(swap_pre[-1])) \
+            if sram_pre and swap_pre else None
+    memory_history = sorted(
+        [(position, allocated) for position, allocated, _ in mem] +
+        [(sample[0], sample[1] / 1024) for sample in game_mem]
+    )
+    if mode == "game" and memory_kb is None:
+        memory_history = []
     fast_mode = mode == "full" and mode_for_start(raw, last_start).get("fast") == 1
     errors = ERROR_RE.findall(run if mode == "full" else raw)
     frames = FRAME_RE.findall(run)
@@ -159,9 +196,10 @@ def state():
         "serial_name": SERIAL_NAME,
         "log_name": log.name,
         "age_seconds": round(age, 1) if age is not None else None,
-        "memory_kb": mem[-1] if mem else None,
-        "zram_kb": zram[-1] if zram else None,
-        "memory_history": [a for a, _ in mem[-40:]],
+        "memory_kb": memory_kb,
+        "zram_kb": zram_kb,
+        "heap_preallocated_kb": heap_preallocated_kb,
+        "memory_history": [value for _, value in memory_history[-40:]],
         "starts": raw.count("DOOM_START"),
         "mode": "game" if mode == "game" else "hybrid" if fast_mode else "legacy" if mode == "full"
                 else "lite" if mode.startswith("lite") else "idle",

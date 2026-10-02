@@ -79,6 +79,24 @@ void printTaskList() {
     //    printf("Free memory:   %d Bytes\n", (unsigned int)xPortGetFreeHeapSize());
 }
 
+static void printGameMemory(void) {
+    size_t getOnChipHeapAllocated(void);
+    size_t getSwapMemHeapAllocated(void);
+    uint32_t getHeapAllocateSize(void);
+    uint32_t zram_free, zram_total;
+
+    /* Keep the existing System memory definitions without the task-list
+     * snapshots or multi-line serial output during Game rendering. */
+    ll_mem_phy_info(&zram_free, &zram_total);
+    printf("DOOMG_MEM a=%lu/%lu z=%lu/%lu s=%lu w=%lu\n",
+           (unsigned long)getHeapAllocateSize(),
+           (unsigned long)TotalAllocatableSize,
+           (unsigned long)(zram_total - zram_free),
+           (unsigned long)zram_total,
+           (unsigned long)getOnChipHeapAllocated(),
+           (unsigned long)getSwapMemHeapAllocated());
+}
+
 void vTask1(void *par1) {
     extern volatile int SkyOS_DoomLiteRunning;
     extern volatile int SkyOS_DoomGameRunning;
@@ -91,7 +109,8 @@ void vTask1(void *par1) {
 #ifdef SKYOS_BUILD_LEGACY_DOOM
         rendering |= SkyOS_DoomFastRunning;
 #endif
-        if (!rendering) printTaskList();
+        if (SkyOS_DoomGameRunning) printGameMemory();
+        else if (!rendering) printTaskList();
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }

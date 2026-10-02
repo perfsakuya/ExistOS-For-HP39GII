@@ -263,6 +263,10 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
     uint8_t wall_top[LITE_RAYS];
     uint8_t wall_bottom[LITE_RAYS];
     uint8_t wall_shade[LITE_RAYS];
+    uint8_t wall_u[LITE_RAYS];
+    uint8_t wall_mortar1[LITE_RAYS];
+    uint8_t wall_mortar2[LITE_RAYS];
+    uint8_t wall_mortar3[LITE_RAYS];
     for (unsigned ray = 0; ray < LITE_RAYS; ++ray) {
         const int offset = ((int)ray * 168) / (int)(LITE_RAYS - 1u) - 84;
         const uint16_t angle = (uint16_t)((int)facing * 4 + offset);
@@ -277,13 +281,31 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
         if (height > LITE_H) height = LITE_H;
         const int top = (LITE_H - height) / 2;
         const int bottom = top + height;
-        int shade = 86 + distance / 16;
+        /* Game uses light masonry with dark mortar. Keep Lite's original
+         * flat-shaded output byte-for-byte unchanged. */
+        int shade = game_mode ? 132 + distance / 24 : 86 + distance / 16;
         if (shade > 185) shade = 185;
         if ((hit.gx ^ hit.gy) & 1) shade += 12;
         if (shade > 200) shade = 200;
         wall_top[ray] = (uint8_t)top;
         wall_bottom[ray] = (uint8_t)bottom;
         wall_shade[ray] = (uint8_t)shade;
+        if (game_mode) {
+            /* A world-space U coordinate keeps brick joints on the wall as
+             * the camera moves. Q14 direction times whole map units fits
+             * signed 32 bits, avoiding a 64-bit multiply per ray. */
+            const int32_t hit_units = (int32_t)(hit.distance_q8 >> 8);
+            const int32_t hit_x = (x >> 8) +
+                (sine_q14_fine((uint16_t)(angle + 256u)) * hit_units >> 14);
+            const int32_t hit_y = (y >> 8) +
+                (sine_q14_fine(angle) * hit_units >> 14);
+            wall_u[ray] = (uint8_t)(hit_x + hit_y) & 63u;
+            /* Three horizontal joints split a near wall into four courses.
+             * Distant walls skip the joints to prevent one-pixel shimmer. */
+            wall_mortar1[ray] = (uint8_t)(top + height / 4);
+            wall_mortar2[ray] = (uint8_t)(top + height / 2);
+            wall_mortar3[ray] = (uint8_t)(top + (height * 3) / 4);
+        }
     }
     /* Write consecutive pixels across each LCD row. This avoids jumping
      * through the 32 KiB framebuffer once per column and screen row. */
@@ -291,11 +313,45 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
         uint8_t *row = pixels + yrow * LITE_W;
         const uint8_t sky = (uint8_t)(226u - yrow / 5u);
         const uint8_t floor = (uint8_t)(173u + yrow / 4u);
-        for (unsigned ray = 0; ray < LITE_RAYS; ++ray) {
-            const uint8_t color = yrow < wall_top[ray] ? sky
-                : yrow < wall_bottom[ray] ? wall_shade[ray] : floor;
-            for (unsigned copy = 0; copy < LITE_RAY_PIXELS; ++copy)
-                row[ray * LITE_RAY_PIXELS + copy] = color;
+        if (!game_mode) {
+            for (unsigned ray = 0; ray < LITE_RAYS; ++ray) {
+                const uint8_t color = yrow < wall_top[ray] ? sky
+                    : yrow < wall_bottom[ray] ? wall_shade[ray] : floor;
+                for (unsigned copy = 0; copy < LITE_RAY_PIXELS; ++copy)
+                    row[ray * LITE_RAY_PIXELS + copy] = color;
+            }
+        } else {
+            for (unsigned ray = 0; ray < LITE_RAYS; ++ray) {
+                uint8_t color;
+                if (yrow < wall_top[ray]) color = sky;
+                else if (yrow >= wall_bottom[ray]) color = floor;
+                else {
+                    const unsigned height = wall_bottom[ray] - wall_top[ray];
+                    const unsigned course = yrow >= wall_mortar3[ray] ? 3u
+                        : yrow >= wall_mortar2[ray] ? 2u
+                        : yrow >= wall_mortar1[ray] ? 1u : 0u;
+                    const unsigned u = (wall_u[ray] +
+                                        ((course & 1u) ? 32u : 0u)) & 63u;
+                    const uint8_t base = wall_shade[ray];
+                    const int horizontal_joint = height >= 24u &&
+                        ((yrow >= wall_mortar1[ray] &&
+                          yrow < wall_mortar1[ray] + 2u) ||
+                         (yrow >= wall_mortar2[ray] &&
+                          yrow < wall_mortar2[ray] + 2u) ||
+                         (yrow >= wall_mortar3[ray] &&
+                          yrow < wall_mortar3[ray] + 2u));
+                    /* Each ray is two LCD pixels wide. Mortar spans at least
+                     * one full ray and differs from the stone by 64 levels. */
+                    if (height >= 16u && (horizontal_joint || u < 4u))
+                        color = (uint8_t)(base - 64u);
+                    else if (height >= 16u && u < 7u)
+                        color = (uint8_t)(base + 20u);
+                    else
+                        color = (uint8_t)(base + ((u & 16u) ? 5u : 0u));
+                }
+                for (unsigned copy = 0; copy < LITE_RAY_PIXELS; ++copy)
+                    row[ray * LITE_RAY_PIXELS + copy] = color;
+            }
         }
     }
     /* Two-pixel crosshair. */

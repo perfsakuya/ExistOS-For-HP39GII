@@ -160,6 +160,46 @@ class DashboardStateTest(unittest.TestCase):
         self.assertEqual(s["mode"], "lite")
         self.assertIsNone(s["game"])
 
+    def test_game_memory_replaces_stale_system_sample_and_preserves_units(self):
+        idle = (
+            "Allocate MEM:57/276 KB\nZRAM:24/92 KB\n"
+            "SRAM Heap Pre-allocated: 58 KB\nSwap Heap Pre-allocated: 0 KB\n"
+        )
+        s = self.read(idle)
+        self.assertEqual(s["memory_kb"], (57, 276))
+        self.assertEqual(s["heap_preallocated_kb"], (58, 0))
+
+        game = idle + "DOOMG_BOOT phase=task_start ms=1000\n"
+        s = self.read(game)
+        self.assertEqual(s["mode"], "game")
+        self.assertIsNone(s["memory_kb"])
+        self.assertIsNone(s["zram_kb"])
+        self.assertEqual(s["memory_history"], [])
+
+        game += "DOOMG_MEM a=61440/282624 z=25088/94208 s=65536 w=0\r\n"
+        game += "DOOMG_MEM a=62464/282624 z=26112/94208 s=71680 w=1024\n"
+        s = self.read(game)
+        self.assertEqual(s["memory_kb"], (61.0, 276.0))
+        self.assertEqual(s["zram_kb"], (25.5, 92.0))
+        self.assertEqual(s["heap_preallocated_kb"], (70.0, 1.0))
+        self.assertEqual(s["memory_history"][-2:], [60.0, 61.0])
+
+        exited = game + "DOOMG_EXIT phase=ui_resume_done ms=3000\n"
+        s = self.read(exited)
+        self.assertIsNone(s["memory_kb"])
+        self.assertIsNone(s["zram_kb"])
+        self.assertIsNone(s["heap_preallocated_kb"])
+
+        after = (exited + "Allocate MEM:57/276 KB\nZRAM:27/92 KB\n"
+                 "SRAM Heap Pre-allocated: 70 KB\n"
+                 "Swap Heap Pre-allocated: 1 KB\n")
+        s = self.read(after)
+        self.assertEqual(s["memory_kb"], (57, 276))
+        self.assertEqual(s["zram_kb"], (27, 92))
+        self.assertEqual(s["heap_preallocated_kb"], (70, 1))
+        s = self.read(after + "DOOMG_BOOT phase=task_start ms=4000\n")
+        self.assertIsNone(s["memory_kb"])
+
 
 if __name__ == "__main__":
     unittest.main()
