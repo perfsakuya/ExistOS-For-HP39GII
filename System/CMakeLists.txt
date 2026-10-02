@@ -55,6 +55,8 @@ ${CMAKE_SOURCE_DIR}/Script/sys_ld.script
 set(LINKER_FLAGS "SHELL:-T${LINKER_SCRIPT} -Wl,--wrap=malloc -Wl,--wrap=free")
 #-Wl,--gc-sections  
 target_link_options(sys.elf PRIVATE ${LINKER_FLAGS}) 
+target_link_directories(sys.elf PRIVATE "${CMAKE_SOURCE_DIR}/fonts")
+set_property(TARGET sys.elf APPEND PROPERTY LINK_DEPENDS "${CMAKE_SOURCE_DIR}/fonts/fonts_hzk16s.ld")
 
  
 #target_compile_options(gb PRIVATE -mtune=arm926ej-s -mcpu=arm926ej-s -mlittle-endian -mfloat-abi=soft -mthumb -Ofast)

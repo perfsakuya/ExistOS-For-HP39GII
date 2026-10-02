@@ -57,6 +57,8 @@ SkyOS 的 50×25 衬线体开机位图及生成脚本已放入 `OSLoader/Include
 
 ## 本机开发状态与下一步
 
-- fork 已克隆到 `F:\workspace\39gii-reverse\ExistOS-For-HP39GII`，`origin` 使用 HTTPS。GitHub CLI 已登录 `perfsakuya`，`git push --dry-run origin HEAD:refs/heads/main` 成功。原先的 SSH 公钥仍未获 GitHub 接受；当前开发可直接使用已验证的 HTTPS 凭据。
-- 当前是按需展开的 sparse checkout，包含 `OSLoader`、`System`、`Script` 和部分工具。编译 System 前需展开 `Libs` 等依赖。当前 PATH 中未找到 `arm-none-eabi-gcc`，因此本次没有进行源码编译。
-- 先处理刷写错误与超时，再修复文件管理器边界问题；每个阶段先构建和测试，再进行实机刷写。此次调研没有再次写入设备。
+- fork 已克隆到 `F:\workspace\39gii-reverse\ExistOS-For-HP39GII`，`origin` 使用 HTTPS。GitHub CLI 已登录 `perfsakuya`，并已成功推送 `skyos/boot-branding` 分支。原先的 SSH 公钥仍未获 GitHub 接受；当前开发使用已验证的 HTTPS 凭据。
+- 按需检出已展开 `Libs`、`fonts`、`tools`、`OSLoader`、`System` 和 `Script`。官方 GNU Arm Embedded Toolchain 10.3-2021.10 安装在 `F:\workspace\39gii-reverse\.toolchains\gcc-arm-none-eabi-10.3-2021.10`，其 `bin` 已加入用户 PATH。下载的官方 ZIP 为 200,578,763 字节，SHA-256 为 `D287439B3090843F3F4E29C7C41F81D958A5323AECEFCF705C203BFD8AE3F2E7`；解压后的文件合计 729,974,068 字节。
+- Windows 编译命令：`cmake -S . -B build -G Ninja`，然后 `cmake --build build --parallel 6`。2026-10-02 在本机成功生成 `build/OSLoader/OSLoader.sb`（93,264 字节，SHA-256 `8208C47FE7CDE6248EB44C592CE7F19011FD600528A5CF4B2DA2359FA872BCE4`）和 `build/System/ExistOS.sys`（5,274,964 字节，SHA-256 `E0133BE02B66159914488C3366F6D2463516B40963111EF72C67EA1411CF383C`）。两个 ELF 均为 ARM little-endian ELF32，Loader 的 `rom.bin` 中找到一份完整的 1,250 字节 SkyOS 开机位图。
+- 首次 System 链接暴露了字体脚本相对路径错误。已在 `Script/sys_ld.script` 中按文件名 `INCLUDE`，并在 `System/CMakeLists.txt` 为链接器指定仓库 `fonts` 目录；这样构建目录位置不影响查找。重新配置与编译均成功。
+- 先处理刷写错误与超时，再修复文件管理器边界问题；每个阶段先构建和测试，再进行实机刷写。本次仅编译，未向设备写入新固件。
