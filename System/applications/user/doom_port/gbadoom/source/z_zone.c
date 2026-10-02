@@ -25,6 +25,9 @@
 #include "doomdef.h"
 #include "doomtype.h"
 #include "lprintf.h"
+#ifdef SKYOS
+#include "sys_llapi.h"
+#endif
 
 
 //
@@ -75,19 +78,29 @@ void Z_Init (void)
     unsigned int heapSize = maxHeapSize;
 
 #ifdef SKYOS
-    // The calculator has less than 200 KiB of free VM RAM. Never spin
-    // forever on allocation failure; the hardware probe proved 128 KiB.
-    static const unsigned int candidates[] = {160 * 1024, 128 * 1024, 112 * 1024};
-    mainzone = NULL;
-    for (unsigned int i = 0; i < sizeof(candidates) / sizeof(candidates[0]); ++i) {
-        mainzone = malloc(candidates[i]);
-        if (mainzone) {
-            heapSize = candidates[i];
-            break;
-        }
-    }
-    if (!mainzone)
-        I_Error("Doom zone allocation failed");
+    // The System heap starts after its data, BSS and task stacks. A large
+    // malloc cannot fit below the compressed-RAM heap limit even though the
+    // loader provides a separate NAND-backed VM RAM area. Doom owns this
+    // fixed region while running; doom_task enables VM swap first.
+    heapSize = 256 * 1024;
+    const unsigned int swapBytes = ll_mem_swap_size();
+    extern unsigned int OnChipMemorySize;
+    extern size_t getSwapMemHeapAllocated(void);
+    if (swapBytes < 1024 * 1024 ||
+        OnChipMemorySize + getSwapMemHeapAllocated() + 64 * 1024 > swapBytes - heapSize)
+        I_Error("Doom swap area unavailable or overlaps heap");
+    // Place the zone at the end of the loader's 3 MiB VM RAM map, away from
+    // the System heap, which grows upward from the beginning of that map.
+    mainzone = (memzone_t *)(0x02000000u + swapBytes - heapSize);
+    printf("DOOM_ZONE backing=swap address=%p bytes=%u\n", mainzone, heapSize);
+    // Cross the 40-page VRAM cache and verify that evicted pages survive FTL.
+    for (unsigned int i = 0; i < heapSize; i += 1024)
+        ((byte *)mainzone)[i] = (byte)((i / 1024) ^ 0x5a);
+    for (unsigned int i = 0; i < heapSize; i += 1024)
+        if (((byte *)mainzone)[i] != (byte)((i / 1024) ^ 0x5a))
+            I_Error("Doom swap zone verification failed at %u", i);
+    memset(mainzone, 0, heapSize);
+    printf("DOOM_ZONE verified bytes=%u\n", heapSize);
 #else
     //We can now alloc all of the rest fo the memory.
     do

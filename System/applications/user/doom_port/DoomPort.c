@@ -141,13 +141,16 @@ static void doom_task(void *unused) {
     const int outcome = setjmp(app_exit);
     if (!outcome) {
         I_PreInitGraphics();
+        // Keep swap enabled after exit: dirty zone pages may remain cached
+        // and must be writable to the FTL when they are later evicted.
+        ll_mem_swap_enable(true);
         Z_Init();
         InitGlobals();
         D_DoomMain();
     }
     printf("DOOM_EXIT outcome=%d frames=%u allocated=%lu\n", outcome,
            frames, (unsigned long)getHeapAllocateSize());
-    if (mainzone) { free(mainzone); mainzone = NULL; }
+    mainzone = NULL; // The SkyOS Doom zone is a fixed VM RAM region, not malloc storage.
     _g = NULL;
     display_barrier();
 done:
