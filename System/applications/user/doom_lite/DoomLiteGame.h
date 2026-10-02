@@ -37,6 +37,7 @@ typedef struct {
     uint8_t facing; /* 256 steps/turn; 0 points along +X. */
     int8_t turn_remainder; /* Signed half-step retained between turns. */
     uint8_t health, ammo, blue_key, completed;
+    uint8_t pistol_tics; /* Visual B6/C4/B5 recoil, at the 35 Hz game clock. */
     uint8_t door_open[DOOM_LITE_GAME_DOORS];
     uint8_t enemy_hp[DOOM_LITE_GAME_THINGS]; /* 0 means dead/non-enemy. */
     uint8_t collected[(DOOM_LITE_GAME_THINGS + 7u) / 8u];

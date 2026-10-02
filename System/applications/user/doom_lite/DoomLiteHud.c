@@ -1,6 +1,11 @@
 /* Portable Game HUD; shares no RTOS or display queue state. */
 #include <string.h>
 #include "DoomLiteHud.h"
+#include "E1M1Ui.h"
+
+#if DOOM_GAME_VIEW_H != E1M1_UI_VIEW_H
+#error "Regenerate the pre-sized UI assets after changing the Game viewport"
+#endif
 
 static const uint8_t glyph_digits[10][5] = {
     {7, 5, 5, 5, 7}, {2, 6, 2, 2, 7}, {7, 1, 7, 4, 7},
@@ -71,9 +76,8 @@ static void draw_end_panel(uint8_t *pixels, const char *title,
     draw_text(pixels, 100u, 69u, "F6 EXIT", 2u);
 }
 
-void DoomLite_DrawGameHud(uint8_t *pixels, const DoomLiteGame *game,
-                          const char *message, unsigned map_zoom) {
-    if (!pixels || !game) return;
+static void draw_map_hud(uint8_t *pixels, const DoomLiteGame *game,
+                         unsigned map_zoom) {
     memset(pixels, 237, DOOM_GAME_HUD_HEIGHT * DOOM_GAME_LCD_W);
     draw_text(pixels, 2u, 3u, "HP", 2u);
     draw_number(pixels, 22u, 3u, game->health, 3u, 2u);
@@ -86,8 +90,88 @@ void DoomLite_DrawGameHud(uint8_t *pixels, const DoomLiteGame *game,
     draw_number(pixels, 172u, 3u, game->blue_key ? 1u : 0u, 1u, 2u);
     if (map_zoom)
         draw_text(pixels, 194u, 3u, map_zoom == 1u ? "F4 1X" : "F4 2X", 2u);
+}
+
+static void draw_patch(uint8_t *pixels, const E1M1UiPatch *patch,
+                       int x, int y, unsigned clip_bottom) {
+    const int x0 = x < 0 ? 0 : x;
+    const int x1 = x + patch->width > (int)DOOM_GAME_LCD_W
+        ? (int)DOOM_GAME_LCD_W : x + patch->width;
+    const int y0 = y < 0 ? 0 : y;
+    const int y1 = y + patch->height > (int)clip_bottom
+        ? (int)clip_bottom : y + patch->height;
+    for (int sy = y0; sy < y1; ++sy) {
+        unsigned source = (unsigned)(sy - y) * patch->width + (unsigned)(x0 - x);
+        uint8_t *row = pixels + sy * DOOM_GAME_LCD_W;
+        for (int sx = x0; sx < x1; ++sx, ++source) {
+            const unsigned code = (patch->pixels[source >> 1] >>
+                                   ((source & 1u) * 4u)) & 15u;
+            if (code) row[sx] = e1m1_ui_gray[code];
+        }
+    }
+}
+
+/* Right-aligned original digit patches; omit unnecessary leading zeroes. */
+static void draw_patch_number(uint8_t *pixels, unsigned right, unsigned y,
+                              unsigned value, int small) {
+    const E1M1UiPatch *const *digits = small ? ui_small_digits : ui_digits;
+    do {
+        const E1M1UiPatch *digit = digits[value % 10u];
+        right -= digit->width;
+        draw_patch(pixels, digit, (int)right, (int)y, DOOM_GAME_LCD_H);
+        value /= 10u;
+    } while (value);
+}
+
+static void draw_status_bar(uint8_t *pixels, const DoomLiteGame *game) {
+    const unsigned top = DOOM_GAME_VIEW_H;
+    memset(pixels + top * DOOM_GAME_LCD_W, 237,
+           DOOM_GAME_STATUS_HEIGHT * DOOM_GAME_LCD_W);
+    draw_patch(pixels, &ui_stbar, 0, (int)top, DOOM_GAME_LCD_H);
+    draw_patch_number(pixels, 34u, top + 4u, game->ammo, 0);
+    draw_patch_number(pixels, 71u, top + 4u, game->health, 0);
+    draw_patch(pixels, &ui_sttprcnt, 72, (int)top + 4, DOOM_GAME_LCD_H);
+    draw_patch_number(pixels, 111u, top + 4u,
+                       game->kills > 99u ? 99u : game->kills, 0);
+    const unsigned pain = (100u - (game->health > 100u ? 100u : game->health)) * 5u / 101u;
+    const E1M1UiPatch *face = ui_faces[game->health ? pain : 5u];
+    draw_patch(pixels, face, 117, (int)top + 1, DOOM_GAME_LCD_H);
+    /* The MVP has no armor inventory, so the classic armor field is zero. */
+    draw_patch_number(pixels, 170u, top + 4u, 0u, 0);
+    draw_patch(pixels, &ui_sttprcnt, 171, (int)top + 4, DOOM_GAME_LCD_H);
+    if (game->blue_key)
+        draw_patch(pixels, &ui_stkeys0, 194, (int)top + 1, DOOM_GAME_LCD_H);
+    /* Only bullets exist in the MVP. Unsupported ammo rows are dashes,
+     * rather than fictitious shell/rocket/cell inventory or capacity. */
+    draw_patch_number(pixels, 230u, top + 1u, game->ammo, 1);
+    draw_patch_number(pixels, 250u, top + 1u, 200u, 1);
+    for (unsigned row = 0; row < 3u; ++row) {
+        const unsigned y = top + 10u + row * 6u;
+        if (y < DOOM_GAME_LCD_H) {
+            memset(pixels + y * DOOM_GAME_LCD_W + 219u, 36, 10u);
+            memset(pixels + y * DOOM_GAME_LCD_W + 239u, 36, 10u);
+        }
+    }
+}
+
+void DoomLite_DrawGameWeapon(uint8_t *pixels, const DoomLiteGame *game) {
+    if (!pixels || !game || !game->health || game->completed) return;
+    const E1M1UiPatch *gun = &ui_pisga0;
+    if (game->pistol_tics > 9u || (game->pistol_tics && game->pistol_tics <= 5u))
+        gun = &ui_pisgb0;
+    else if (game->pistol_tics) gun = &ui_pisgc0;
+    draw_patch(pixels, gun, gun->x, gun->y, DOOM_GAME_VIEW_H);
+    if (game->pistol_tics > 8u)
+        draw_patch(pixels, &ui_pisfa0, ui_pisfa0.x, ui_pisfa0.y, DOOM_GAME_VIEW_H);
+}
+
+void DoomLite_DrawGameHud(uint8_t *pixels, const DoomLiteGame *game,
+                          const char *message, unsigned map_zoom) {
+    if (!pixels || !game) return;
+    if (map_zoom) draw_map_hud(pixels, game, map_zoom);
+    else draw_status_bar(pixels, game);
     if (message) {
-        const unsigned y = DOOM_GAME_LCD_H - DOOM_GAME_HUD_HEIGHT;
+        const unsigned y = map_zoom ? DOOM_GAME_LCD_H - DOOM_GAME_HUD_HEIGHT : 0u;
         memset(pixels + y * DOOM_GAME_LCD_W, 237,
                DOOM_GAME_HUD_HEIGHT * DOOM_GAME_LCD_W);
         draw_text(pixels, 4u, y + 3u, message, 2u);

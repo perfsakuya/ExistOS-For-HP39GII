@@ -42,10 +42,10 @@ def read_lumps(data: bytes) -> dict[str, bytes]:
     return lumps
 
 
-def decode_patch(data: bytes) -> tuple[int, int, list[int | None]]:
+def decode_patch(data: bytes, *, max_width: int = 255) -> tuple[int, int, list[int | None]]:
     require(len(data) >= 8, "short patch header")
     width, height, _, _ = struct.unpack_from("<hhhh", data)
-    require(0 < width <= 255 and 0 < height <= 255, "invalid sprite dimensions")
+    require(0 < width <= max_width and 0 < height <= 255, "invalid sprite dimensions")
     require(8 + width * 4 <= len(data), "short patch column directory")
     pixels: list[int | None] = [None] * (width * height)
     for x in range(width):

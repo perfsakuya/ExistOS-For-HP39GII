@@ -275,10 +275,10 @@ def state():
             **{f"{phase}_ms": round(game_perf[f"{phase}_total_us"] /
                                     (game_perf["frames"] * 1000), 3)
                if f"{phase}_total_us" in game_perf else None
-               for phase in ("scene", "sprite", "hud")},
+               for phase in ("scene", "sprite", "hud", "weapon")},
             **{f"{phase}_max_ms": round(game_perf[f"{phase}_max_us"] / 1000, 3)
                if f"{phase}_max_us" in game_perf else None
-               for phase in ("scene", "sprite", "hud")},
+               for phase in ("scene", "sprite", "hud", "weapon")},
             "lcd_ms": round(game_perf.get("lcd_total_us",
                                           game_perf["lcd_total_ms"] * 1000) /
                             (game_perf["frames"] * 1000), 3),
@@ -295,6 +295,7 @@ def state():
             "blue_key": bool(game_perf["blue"]) if "blue" in game_perf else None,
             "map": bool(game_perf["map"]) if "map" in game_perf else None,
             "zoom": game_perf.get("zoom"),
+            "pistol_tics": game_perf.get("pistol_tics"),
             "x": game_perf.get("x"),
             "y": game_perf.get("y"),
         } if game_perf and all(key in game_perf for key in

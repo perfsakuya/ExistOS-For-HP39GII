@@ -32,6 +32,7 @@ typedef struct {
     uint32_t render_total_us, render_max_us;
     uint32_t scene_total_us, scene_max_us;
     uint32_t sprite_total_us, sprite_max_us;
+    uint32_t weapon_total_us, weapon_max_us;
     uint32_t hud_total_us, hud_max_us;
     uint32_t lcd_total_us, lcd_max_us;
     uint32_t interval_total_us, interval_max_us;
@@ -59,7 +60,8 @@ static void log_perf(GamePerf *perf, const DoomLiteGame *game,
            "interval_samples=%u interval_total_ms=%lu interval_max_ms=%lu "
            "dropped_ticks=%u hp=%u ammo=%u kills=%u blue=%u map=%d "
            "x=%ld y=%ld zoom=%u scene_total_us=%lu scene_max_us=%lu "
-           "sprite_total_us=%lu sprite_max_us=%lu hud_total_us=%lu hud_max_us=%lu\n",
+           "sprite_total_us=%lu sprite_max_us=%lu hud_total_us=%lu hud_max_us=%lu "
+           "weapon_total_us=%lu weapon_max_us=%lu pistol_tics=%u\n",
            perf->frames, (unsigned long)(now_ms - perf->wall_start_ms),
            perf->logic_ticks,
            rounded_ms(perf->logic_total_us), rounded_ms(perf->logic_max_us),
@@ -80,7 +82,9 @@ static void log_perf(GamePerf *perf, const DoomLiteGame *game,
            map_mode ? map_zoom : 0u,
            (unsigned long)perf->scene_total_us, (unsigned long)perf->scene_max_us,
            (unsigned long)perf->sprite_total_us, (unsigned long)perf->sprite_max_us,
-           (unsigned long)perf->hud_total_us, (unsigned long)perf->hud_max_us);
+           (unsigned long)perf->hud_total_us, (unsigned long)perf->hud_max_us,
+           (unsigned long)perf->weapon_total_us, (unsigned long)perf->weapon_max_us,
+           (unsigned)game->pistol_tics);
     const uint32_t last_render_us = perf->last_render_us;
     memset(perf, 0, sizeof(*perf));
     perf->wall_start_ms = now_ms;
@@ -211,12 +215,12 @@ static void doom_game_task(void *unused) {
             ++run;
             accumulator -= GAME_TIC_THRESHOLD;
             if (events) {
-                printf("DOOMG_EVENT tick=%lu flags=0x%04lx hp=%u ammo=%u kills=%u blue=%u completed=%u\n",
+                printf("DOOMG_EVENT tick=%lu flags=0x%04lx hp=%u ammo=%u kills=%u blue=%u completed=%u pistol_tics=%u\n",
                        (unsigned long)game_state.ticks, (unsigned long)events,
                        (unsigned)game_state.health, (unsigned)game_state.ammo,
                        (unsigned)game_state.kills,
                        (unsigned)game_state.blue_key,
-                       (unsigned)game_state.completed);
+                       (unsigned)game_state.completed, (unsigned)game_state.pistol_tics);
                 message = message_for_event(events);
                 message_until_tick = game_state.ticks + 70u;
             }
@@ -249,6 +253,10 @@ static void doom_game_task(void *unused) {
                 DoomLite_RenderGameThings(pixels, &game_state);
                 record_time(ll_get_time_us() - sprite_start_us,
                             &perf.sprite_total_us, &perf.sprite_max_us);
+                const uint32_t weapon_start_us = ll_get_time_us();
+                DoomLite_DrawGameWeapon(pixels, &game_state);
+                record_time(ll_get_time_us() - weapon_start_us,
+                            &perf.weapon_total_us, &perf.weapon_max_us);
             }
             if (message && (int32_t)(game_state.ticks - message_until_tick) >= 0)
                 message = NULL;

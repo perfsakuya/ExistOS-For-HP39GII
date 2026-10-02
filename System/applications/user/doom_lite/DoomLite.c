@@ -17,6 +17,7 @@
 #include "E1M1Portals.h"
 #include "DoomLiteRender.h"
 #include "E1M1Sprites.h"
+#include "DoomLiteHud.h"
 
 #define LITE_W LCD_PIX_W
 #define LITE_H LCD_PIX_H
@@ -300,6 +301,7 @@ static uint8_t door_panel_color(unsigned y, unsigned top, unsigned bottom,
 static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
                        int game_mode,
                        const uint8_t door_open[E1M1_DOOR_COUNT]) {
+    const int scene_h = game_mode ? (int)DOOM_GAME_VIEW_H : LITE_H;
     uint8_t wall_top[LITE_RAYS];
     uint8_t wall_bottom[LITE_RAYS];
     uint8_t wall_shade[LITE_RAYS];
@@ -319,8 +321,8 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
             (uint16_t)(distance > 0 ? distance : 0);
         if (distance < 24) distance = 24;
         int height = 8192 / distance;
-        if (height > LITE_H) height = LITE_H;
-        const int top = (LITE_H - height) / 2;
+        if (height > scene_h) height = scene_h;
+        const int top = (scene_h - height) / 2;
         const int bottom = top + height;
         /* Game uses light masonry with dark mortar. Keep Lite's original
          * flat-shaded output byte-for-byte unchanged. */
@@ -352,7 +354,7 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
     }
     /* Write consecutive pixels across each LCD row. This avoids jumping
      * through the 32 KiB framebuffer once per column and screen row. */
-    for (unsigned yrow = 0; yrow < LITE_H; ++yrow) {
+    for (unsigned yrow = 0; yrow < (unsigned)scene_h; ++yrow) {
         uint8_t *row = pixels + yrow * LITE_W;
         const uint8_t sky = (uint8_t)(226u - yrow / 5u);
         const uint8_t floor = (uint8_t)(173u + yrow / 4u);
@@ -401,8 +403,8 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
         }
     }
     /* Two-pixel crosshair. */
-    pixels[(LITE_H / 2u) * LITE_W + LITE_W / 2u] = 24;
-    pixels[(LITE_H / 2u) * LITE_W + LITE_W / 2u - 1u] = 24;
+    pixels[(scene_h / 2u) * LITE_W + LITE_W / 2u] = 24;
+    pixels[(scene_h / 2u) * LITE_W + LITE_W / 2u - 1u] = 24;
 }
 
 static void draw_map(uint8_t *pixels, int32_t x, int32_t y) {
@@ -616,7 +618,7 @@ void DoomLite_RenderGameThings(uint8_t *pixels, const DoomLiteGame *game) {
     for (unsigned i = 0; i < count; ++i) {
         const GameSprite *sprite = &sprites[i];
         const int left = sprite->center - sprite->width / 2;
-        const int top = (LITE_H - sprite->height) / 2;
+        const int top = ((int)DOOM_GAME_VIEW_H - sprite->height) / 2;
         const int right = left + sprite->width;
         const int bottom = top + sprite->height;
         const E1M1Sprite *asset = &e1m1_sprites[sprite->texture];

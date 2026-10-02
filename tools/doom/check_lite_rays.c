@@ -4,7 +4,7 @@
  * This checks the production trigonometry against libm, compares rays with a
  * one-unit reference march, and checks the exact renderer's frame bounds.
  * Optional arguments: preview.pgm [facing] [print-ray-table], or
- * --game-preview preview.pgm [start|key|enemy|door|door-open], or
+ * --game-preview preview.pgm [start|key|enemy|door|door-open] [pistol_tics], or
  * --game-map-preview preview.pgm [open|key-collected|zoom]. */
 #define DOOM_LITE_RAY_TEST
 #define LCD_PIX_W 256
@@ -473,6 +473,10 @@ int main(int argc, char **argv) {
             if (strcmp(argv[3], "door-open") == 0)
                 game.door_open[0] = 1u;
         }
+        if (argc > 4) {
+            const unsigned tics = (unsigned)strtoul(argv[4], NULL, 0);
+            game.pistol_tics = (uint8_t)(tics <= 15u ? tics : 15u);
+        }
         DoomLite_RenderGameFrame(frame + 8u, game.x_q8, game.y_q8,
                                   game.facing, 0, game.door_open);
         /* Keep door previews unobstructed by the nearby starting enemy. */
@@ -480,6 +484,7 @@ int main(int argc, char **argv) {
             (strcmp(argv[3], "door") != 0 &&
              strcmp(argv[3], "door-open") != 0))
             DoomLite_RenderGameThings(frame + 8u, &game);
+        DoomLite_DrawGameWeapon(frame + 8u, &game);
         DoomLite_DrawGameHud(frame + 8u, &game, NULL, 0u);
         FILE *preview = fopen(argv[2], "wb");
         if (!preview) return 22;

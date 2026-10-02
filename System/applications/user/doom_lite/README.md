@@ -15,14 +15,14 @@ key, door interaction, a map, and the original E1M1 exit switch. Four enemy
 types and the blue key use one static Freedoom patch each, packed into 4,840
 read-only bytes with transparency and 15 grayscale levels. These patches are
 read directly from flash; no decoded sprite heap is allocated. AI, sound,
-animated sectors, original wall textures, sprite animation, and
+animated sectors, original wall textures, world-sprite animation, and
 demo-compatible Doom rules are outside this MVP. The
 legacy full Doom apps remain in source but are excluded from the default
 firmware build with `SKYOS_BUILD_LEGACY_DOOM=OFF`; they have a known exit
 freeze risk on this device. `Lite` remains available as a renderer baseline.
 
 Controls: arrows move and turn, F1 shoots, F2 uses a door or switch, F5
-toggles the map, and F6 or ON returns to the application list. The display
+toggles the map, and F6 or ON returns to the application list. The map
 uses 10-pixel-tall status text. In the map, F4 switches between the default
 2x view and full-level overview, with larger key and exit markers. Turning
 advances 1.5 of 256 angle steps per 35 Hz tick (about 73.8 degrees/s), 25%
@@ -48,6 +48,44 @@ The separate Lite map retains its original appearance.
 In the 3D view, closed doors use a light panel with a dark frame and centre
 seam so they are distinguishable from masonry. F2 still opens them instantly;
 animated door height is not implemented.
+
+### Classic status bar and pistol
+
+The next image adds a 26-row bottom bar with the Freedoom `STBAR`, tall
+numbers, health-dependent face, and blue-key icon. The 3D viewport is
+256x101, with its horizon and world sprites centred within that view. The
+map keeps its readable top row and existing full-height overview instead
+of squeezing its objectives underneath the bottom bar. The bar shows ammo,
+health, kills, and the key; armor is zero because the MVP has no armor
+inventory. Only bullet ammo is supported; other ammo counters are dashes.
+The original small label strip is rebuilt with Freedoom's menu lettering,
+using light backgrounds and dark lettering. Counter shadows and digit
+holes are lightened separately so the numbers remain distinguishable.
+
+`build_lite_ui.py` pre-sizes 33 UI/weapon patches into 8,622 packed flash
+bytes. There is no decoded image heap or second framebuffer. The ARM
+linker's static BSS remains 29,616 bytes. Pistol A/B/C and its muzzle flash
+use the WAD patch offsets and the classic 32-unit weapon-ready position.
+Successful shots trigger B6/C4/B5 recoil (15 game tics) and a seven-tic
+flash. These are visual timers at 35 Hz; the MVP retains its immediate
+hits and one shot per F1 press. Empty ammo causes no flash. The weapon is
+hidden on the map, at death, and after completion. New sessions reset it.
+Weapon bob, firing sounds, and other weapons are not implemented.
+
+`DOOMG_PERF` additionally records `weapon_total_us`, `weapon_max_us`, and
+`pistol_tics`; the dashboard displays weapon/flash mean and peak times.
+Run `build_lite_ui.py --check`, `test_lite_ui.py`, and `check_lite_ui.c`
+alongside the geometry/gameplay checks before packaging this image.
+Host checks and the ARM build pass. The user confirmed that the bottom
+labels/numbers are clear and the pistol animation looks normal. Three
+physical runs recorded 559/52/912 frames over 23.139/2.115/37.017 seconds
+(24.16/24.59/24.64 fps), zero dropped logic ticks, six actual shots with
+`pistol_tics=15`, and three complete exits. In the first run, scene, weapon,
+HUD, and LCD averaged 14.908/0.100/6.043/12.972 ms per frame. The longest
+observed interval was 123 ms; this is an average frame-rate measurement,
+not a per-frame 100 ms guarantee. The serial log is
+`freedoom-game-classic-ui-hardware.log`. Game heap samples remained
+69,320 bytes allocated out of 282,624, matching the previous Game build.
 
 Host geometry and gameplay checks pass, and the ARM System image builds
 within the ROM partition. On the calculator, the user confirmed the scene,

@@ -149,12 +149,16 @@ class DashboardStateTest(unittest.TestCase):
         self.assertIsNone(s["game"]["scene_ms"])
         profiled = self.read(previous.replace("x=-416 y=256",
             "x=-416 y=256 zoom=2 scene_total_us=256000 scene_max_us=11000 "
-            "sprite_total_us=32000 sprite_max_us=2200 hud_total_us=32000 hud_max_us=1200"))
+            "sprite_total_us=32000 sprite_max_us=2200 hud_total_us=32000 hud_max_us=1200 "
+            "weapon_total_us=16000 weapon_max_us=900 pistol_tics=15"))
         self.assertEqual(profiled["game"]["scene_ms"], 8)
         self.assertEqual(profiled["game"]["sprite_ms"], 1)
         self.assertEqual(profiled["game"]["hud_ms"], 1)
         self.assertEqual(profiled["game"]["sprite_max_ms"], 2.2)
         self.assertEqual(profiled["game"]["zoom"], 2)
+        self.assertEqual(profiled["game"]["weapon_ms"], 0.5)
+        self.assertEqual(profiled["game"]["weapon_max_ms"], 0.9)
+        self.assertEqual(profiled["game"]["pistol_tics"], 15)
         self.assertEqual(s["game"]["lcd_ms"], 12)
         self.assertEqual(s["game"]["interval_max_ms"], 44)
         self.assertEqual(s["game"]["interval_ms"], 33.26)

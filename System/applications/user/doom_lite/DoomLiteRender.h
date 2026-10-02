@@ -18,7 +18,8 @@ void DoomLite_RenderFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
 
 /* Gameplay renderer: a zero door_open[] entry blocks rays at that door's
  * exact WAD boundary; any nonzero entry lets rays pass through. This leaves
- * the original DoomLite_RenderFrame() geometry and appearance unchanged. */
+ * the original DoomLite_RenderFrame() geometry and appearance unchanged.
+ * The 3D Game entry renders the top 101 rows; DrawGameHud owns the bottom 26. */
 void DoomLite_RenderGameFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
                               uint8_t facing, int map_mode,
                               const uint8_t door_open[E1M1_DOOR_COUNT]);

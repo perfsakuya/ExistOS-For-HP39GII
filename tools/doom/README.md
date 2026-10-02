@@ -34,6 +34,13 @@ from that verified WAD into `E1M1Sprites.h`. Run it with `--check` and run
 retain the Freedoom `COPYING.txt` and `CREDITS.txt` attribution; only 4,840
 packed grayscale bytes are linked instead of the full WAD.
 
+`build_lite_ui.py` also reads that WAD to generate `E1M1Ui.h`: a pre-sized
+status bar, digits, faces, key icon, three pistol frames, and muzzle flash.
+The bar lettering is rebuilt from Freedoom's small menu font with stronger
+LCD contrast. Run it with `--check`, `test_lite_ui.py`, and the portable
+`check_lite_ui.c` composition/animation check. UI data occupies 8,622 flash
+bytes without allocating a decoded framebuffer or image cache.
+
 ## Live serial debugging
 
 The calculator exposes a 9600-baud USB serial port while System is running.

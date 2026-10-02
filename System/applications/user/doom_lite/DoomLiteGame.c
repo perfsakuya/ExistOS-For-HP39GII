@@ -362,6 +362,7 @@ static int line_of_sight(const DoomLiteGame *game, int32_t tx, int32_t ty) {
 static uint32_t fire_pistol(DoomLiteGame *game) {
     if (!game->ammo) return DL_EVENT_SHOT_MISS;
     --game->ammo;
+    game->pistol_tics = 15u;
     const int32_t px = game->x_q8 / 256, py = game->y_q8 / 256;
     const int32_t dirx = sine_q14((uint8_t)(game->facing + 64u));
     const int32_t diry = sine_q14(game->facing);
@@ -413,6 +414,7 @@ static uint32_t enemy_attack(DoomLiteGame *game) {
 
 uint32_t DoomLiteGame_Step(DoomLiteGame *game, uint16_t buttons) {
     ++game->ticks;
+    if (game->pistol_tics) --game->pistol_tics;
     const uint16_t pressed = buttons & ~game->previous_buttons;
     game->previous_buttons = (uint8_t)buttons;
     if (game->completed || !game->health) return 0;
