@@ -81,10 +81,17 @@ void printTaskList() {
 
 void vTask1(void *par1) {
     extern volatile int SkyOS_DoomLiteRunning;
+    extern volatile int SkyOS_DoomGameRunning;
+#ifdef SKYOS_BUILD_LEGACY_DOOM
     extern volatile int SkyOS_DoomFastRunning;
+#endif
     while (1) {
-        /* Both fast Doom modes emit frame and timing counters themselves. */
-        if (!SkyOS_DoomLiteRunning && !SkyOS_DoomFastRunning) printTaskList();
+        /* Active renderers emit their own compact timing counters. */
+        int rendering = SkyOS_DoomLiteRunning || SkyOS_DoomGameRunning;
+#ifdef SKYOS_BUILD_LEGACY_DOOM
+        rendering |= SkyOS_DoomFastRunning;
+#endif
+        if (!rendering) printTaskList();
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }

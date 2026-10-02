@@ -1,5 +1,37 @@
 # E1M1 Lite
 
+## E1M1 Game MVP (offline candidate)
+
+The `Game` application adds a deliberately simplified, E1M1-specific game
+simulation to the Lite renderer. `build_lite_game_data.py` extracts medium
+single-player THINGS, special lines, and door sectors from the converted
+Freedoom E1M1 WAD. `build_lite_portals.py` adds exact WAD segments around
+doors so opening one changes both collision and ray casting. These generated
+tables can be checked against the WAD hash with the `--check` generators.
+
+The MVP has 35 Hz movement and collisions, medium-skill enemy placements,
+health and ammo, a basic pistol and enemy damage, pickups including the blue
+key, door interaction, a map, and the original E1M1 exit switch. Enemies and
+the blue key use compact grayscale silhouettes. AI, sound, animated sectors,
+original textures, and demo-compatible Doom rules are outside this MVP. The
+legacy full Doom apps remain in source but are excluded from the default
+firmware build with `SKYOS_BUILD_LEGACY_DOOM=OFF`; they have a known exit
+freeze risk on this device. `Lite` remains available as a renderer baseline.
+
+Controls: arrows move and turn, F1 shoots, F2 uses a door or switch, F5
+toggles the map, and F6 or ON returns to the application list. The display
+uses the UI framebuffer and its proven queue barrier without a Doom swap
+zone. Every 32 frames, and for a final partial batch on exit, `DOOMG_PERF`
+records elapsed time, 35 Hz logic ticks, logic/render/LCD totals and maxima
+in both microseconds and milliseconds, frame intervals, dropped ticks,
+position, health, ammo, kills, key, and map state. `DOOMG_BOOT`,
+`DOOMG_EVENT`, and `DOOMG_EXIT` mark startup, actions, and each exit stage.
+`tools/doom/serial_dashboard.py` parses these records.
+
+Host geometry and gameplay checks pass, and the ARM System image builds
+within the ROM partition. The `Game` app has **not** yet been tested on the
+physical calculator; its frame rate and exit reliability remain unverified.
+
 This is a small, native E1M1 walk-through built for a 10+ fps target on the
 HP 39gII. The wall layout is generated from the freely licensed Freedoom
 E1M1 `LINEDEFS` in the converted WAD by

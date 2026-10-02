@@ -34,6 +34,9 @@ FIELD_RE = re.compile(r"([a-z_]+)=(-?\d+)")
 MODE_RE = re.compile(r"(?m)^DOOM_MODE\b[^\r\n]*")
 FAST_RE = re.compile(r"(?m)^DOOM_FAST\b[^\r\n]*")
 TIC_RE = re.compile(r"(?m)^DOOM_TIC\b[^\r\n]*")
+GAME_PERF_RE = re.compile(r"(?m)^DOOMG_PERF\b[^\r\n]*")
+GAME_BOOT_RE = re.compile(r"(?m)^DOOMG_BOOT\b[^\r\n]*")
+GAME_EXIT_RE = re.compile(r"(?m)^DOOMG_EXIT\b[^\r\n]*")
 DIAG_HEARTBEAT_RE = re.compile(
     r"DOOM_DIAG_HEARTBEAT seconds=(\d+) key=([0-9a-fA-F]+) "
     r"allocated=(\d+) critical=(\d+)"
@@ -83,7 +86,13 @@ def state():
     last_start = raw.rfind("DOOM_START")
     last_lite_perf = raw.rfind("DOOMLITE_PERF")
     last_lite_exit = raw.rfind("DOOMLITE_EXIT")
-    if last_start > max(last_lite_perf, last_lite_exit):
+    last_game_boot = raw.rfind("DOOMG_BOOT phase=task_start")
+    last_game_perf = raw.rfind("DOOMG_PERF")
+    last_game_exit = raw.rfind("DOOMG_EXIT")
+    last_game = max(last_game_boot, last_game_perf, last_game_exit)
+    if last_game > max(last_start, last_lite_perf, last_lite_exit):
+        mode = "game"
+    elif last_start > max(last_lite_perf, last_lite_exit):
         mode = "full"
     elif last_lite_perf > last_lite_exit:
         mode = "lite_running"
@@ -92,6 +101,10 @@ def state():
     else:
         mode = "idle"
     run = raw[last_start:] if mode == "full" else ""
+    game_run = raw[last_game_boot:] if mode == "game" and last_game_boot >= 0 else ""
+    game_perf = latest_fields(GAME_PERF_RE, game_run)
+    game_boot = GAME_BOOT_RE.findall(game_run)
+    game_exits = GAME_EXIT_RE.findall(game_run)
     fast_mode = mode == "full" and mode_for_start(raw, last_start).get("fast") == 1
     errors = ERROR_RE.findall(run if mode == "full" else raw)
     frames = FRAME_RE.findall(run)
@@ -114,7 +127,16 @@ def state():
     last_status = raw.rfind("=============SYSTEM STATUS")
     latest_task_list = raw[last_status:] if last_status >= 0 else ""
     doom_task_visible = bool(re.search(r"(?m)^Doom\s+[XRBSD]\s+", latest_task_list))
-    if mode == "lite_running":
+    if mode == "game":
+        if any("phase=ui_resume_done" in line for line in game_exits):
+            stage = "E1M1 Game 已退出"
+        elif game_exits:
+            stage = "E1M1 Game 退出处理中"
+        elif game_perf:
+            stage = "E1M1 Game 运行中"
+        else:
+            stage = "E1M1 Game 启动中"
+    elif mode == "lite_running":
         stage = "E1M1 Lite 运行中"
     elif mode == "lite_exited":
         stage = "E1M1 Lite 已退出"
@@ -141,7 +163,7 @@ def state():
         "zram_kb": zram[-1] if zram else None,
         "memory_history": [a for a, _ in mem[-40:]],
         "starts": raw.count("DOOM_START"),
-        "mode": "hybrid" if fast_mode else "legacy" if mode == "full"
+        "mode": "game" if mode == "game" else "hybrid" if fast_mode else "legacy" if mode == "full"
                 else "lite" if mode.startswith("lite") else "idle",
         "stage": stage,
         "zone_verified": raw.count("DOOM_ZONE verified"),
@@ -197,6 +219,48 @@ def state():
             "max_ms": tic["max_ms"],
         } if tic and all(key in tic for key in ("tics", "sum_ms", "max_ms"))
              and tic["tics"] > 0 else None,
+        "game": {
+            "fps": round(game_perf["frames"] * 1000 / game_perf["elapsed_ms"], 2),
+            "frame_ms": round(game_perf["elapsed_ms"] / game_perf["frames"], 2),
+            "logic_ticks": game_perf["logic_ticks"],
+            "logic_ms": round(game_perf.get("logic_total_us",
+                                            game_perf["logic_total_ms"] * 1000) /
+                              (game_perf["logic_ticks"] * 1000), 3)
+                        if game_perf["logic_ticks"] else None,
+            "logic_max_ms": round(game_perf.get("logic_max_us",
+                                                 game_perf["logic_max_ms"] * 1000) / 1000, 3),
+            "render_ms": round(game_perf.get("render_total_us",
+                                             game_perf["render_total_ms"] * 1000) /
+                               (game_perf["frames"] * 1000), 3),
+            "render_max_ms": round(game_perf.get("render_max_us",
+                                                  game_perf["render_max_ms"] * 1000) / 1000, 3),
+            "lcd_ms": round(game_perf.get("lcd_total_us",
+                                          game_perf["lcd_total_ms"] * 1000) /
+                            (game_perf["frames"] * 1000), 3),
+            "lcd_max_ms": round(game_perf.get("lcd_max_us",
+                                               game_perf["lcd_max_ms"] * 1000) / 1000, 3),
+            "interval_ms": round(game_perf["interval_total_ms"] /
+                                 game_perf.get("interval_samples", game_perf["frames"]), 2)
+                           if game_perf.get("interval_samples", game_perf["frames"]) else None,
+            "interval_max_ms": game_perf["interval_max_ms"],
+            "dropped_ticks": game_perf["dropped_ticks"],
+            "health": game_perf.get("hp"),
+            "ammo": game_perf.get("ammo"),
+            "kills": game_perf.get("kills"),
+            "blue_key": bool(game_perf["blue"]) if "blue" in game_perf else None,
+            "map": bool(game_perf["map"]) if "map" in game_perf else None,
+            "x": game_perf.get("x"),
+            "y": game_perf.get("y"),
+        } if game_perf and all(key in game_perf for key in
+                             ("frames", "elapsed_ms", "logic_ticks",
+                              "logic_total_ms", "logic_max_ms",
+                              "render_total_ms", "render_max_ms",
+                              "lcd_total_ms", "lcd_max_ms",
+                              "interval_total_ms", "interval_max_ms",
+                              "dropped_ticks"))
+             and game_perf["frames"] > 0 and game_perf["elapsed_ms"] > 0 else None,
+        "game_boot": game_boot[-1] if game_boot else None,
+        "game_exit": game_exits[-1] if game_exits else None,
         "diagnostic": {
             "seconds": int(last_diagnostic[0]) if last_diagnostic else None,
             "key": last_diagnostic[1] if last_diagnostic else None,

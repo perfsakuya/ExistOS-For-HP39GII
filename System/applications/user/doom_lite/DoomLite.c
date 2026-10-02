@@ -1,6 +1,7 @@
 /* Fast, intentionally simplified E1M1 walk-through for the 39gII LCD.
- * Geometry comes from the freely licensed Freedoom E1M1 map. This renderer
- * does not emulate Doom sectors, sprites, monsters, doors, or game rules. */
+ * Geometry comes from the freely licensed Freedoom E1M1 map. The original
+ * Lite entry point keeps its fixed grid view; the game entry point adds
+ * dynamic WAD door boundaries and simple object silhouettes. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -13,6 +14,7 @@
 #include "sys_llapi.h"
 #endif
 #include "E1M1Grid.h"
+#include "E1M1Portals.h"
 #include "DoomLiteRender.h"
 
 #define LITE_W LCD_PIX_W
@@ -21,6 +23,8 @@
 #define LITE_RAYS (LITE_W / LITE_RAY_PIXELS)
 #define LITE_CELL_Q8 (E1M1_CELL * 256u)
 #define LITE_MAX_DISTANCE_Q8 (1536u * 256u)
+#define LITE_SPRITE_LIMIT 32u
+#define LITE_PROJECTION 226
 
 /* Sine for the first quarter turn in Q14, including both endpoints. */
 static const int16_t quarter_sine[65] = {
@@ -37,6 +41,11 @@ static const int16_t quarter_sine[65] = {
 volatile int SkyOS_DoomLiteRunning;
 static uint8_t barrier_pixel;
 #endif
+
+/* Only the game scene fills this depth cache; it uses one corrected wall
+ * distance per two LCD columns. The game overlay consumes it immediately. */
+static uint16_t game_wall_depth[LITE_RAYS];
+static uint8_t game_wall_ready;
 
 static int sine_q14(uint8_t angle) {
     const unsigned quadrant = angle >> 6;
@@ -115,6 +124,129 @@ static RayHit cast_ray(int32_t x, int32_t y, uint16_t angle) {
     return hit;
 }
 
+/* The sparse portal table replaces coarse grid occupancy in door-adjacent
+ * cells. A cell may contain both a permanent wall and a moving door edge, so
+ * choose the nearest actual segment within this cell's DDA time interval. */
+static const E1M1PortalCell *portal_cell(int gx, int gy) {
+    const int ix = gx - E1M1_PORTAL_GX0;
+    const int iy = gy - E1M1_PORTAL_GY0;
+    if ((unsigned)ix >= E1M1_PORTAL_WIDTH ||
+        (unsigned)iy >= E1M1_PORTAL_HEIGHT)
+        return NULL;
+    const unsigned first = e1m1_portal_row_first[iy];
+    const unsigned end = e1m1_portal_row_first[iy + 1];
+    for (unsigned i = first; i < end; ++i) {
+        if (e1m1_portal_cells[i].x == ix)
+            return &e1m1_portal_cells[i];
+        if (e1m1_portal_cells[i].x > ix) break;
+    }
+    return NULL;
+}
+
+static uint32_t portal_hit_q8(const E1M1PortalCell *cell, int32_t x,
+                              int32_t y, int32_t dx, int32_t dy,
+                              uint32_t entry_q8, uint32_t exit_q8,
+                              const uint8_t door_open[E1M1_DOOR_COUNT]) {
+    uint32_t nearest = UINT32_MAX;
+    for (unsigned ref = cell->first_ref;
+         ref < (unsigned)cell->first_ref + cell->ref_count; ++ref) {
+        const E1M1PortalSegment *segment =
+            &e1m1_portal_segments[e1m1_portal_refs[ref]];
+        if (segment->door_sector != E1M1_PORTAL_NO_DOOR) {
+            const uint8_t door = e1m1_door_index_by_sector[
+                segment->door_sector];
+            if (door < E1M1_DOOR_COUNT && door_open && door_open[door])
+                continue;
+        }
+        const int32_t ax = (int32_t)segment->x1 * 256 - x;
+        const int32_t ay = (int32_t)segment->y1 * 256 - y;
+        const int32_t sx = (int32_t)segment->x2 - segment->x1;
+        const int32_t sy = (int32_t)segment->y2 - segment->y1;
+        int64_t denominator = (int64_t)dx * sy - (int64_t)dy * sx;
+        if (denominator == 0) continue;
+        int64_t along_ray = (int64_t)ax * sy - (int64_t)ay * sx;
+        int64_t along_segment = (int64_t)ax * dy - (int64_t)ay * dx;
+        if (denominator < 0) {
+            denominator = -denominator;
+            along_ray = -along_ray;
+            along_segment = -along_segment;
+        }
+        /* along_segment has one extra Q8 factor: A-O is in Q8, while the
+         * segment vector above is expressed in whole Doom map units. */
+        if (along_ray < 0 || along_segment < 0 ||
+            along_segment > denominator * 256)
+            continue;
+        const uint64_t scaled = (uint64_t)along_ray << 14;
+        if (scaled < (uint64_t)entry_q8 * (uint64_t)denominator ||
+            scaled > (uint64_t)exit_q8 * (uint64_t)denominator)
+            continue;
+        const uint32_t distance = (uint32_t)(scaled /
+                                             (uint64_t)denominator);
+        if (distance < nearest) nearest = distance;
+    }
+    return nearest;
+}
+
+static RayHit cast_game_ray(int32_t x, int32_t y, uint16_t angle,
+                            const uint8_t door_open[E1M1_DOOR_COUNT]) {
+    const int32_t dx = sine_q14_fine((uint16_t)(angle + 256u));
+    const int32_t dy = sine_q14_fine(angle);
+    int gx = x >> 13, gy = y >> 13;
+    const int step_x = dx < 0 ? -1 : 1;
+    const int step_y = dy < 0 ? -1 : 1;
+    const uint32_t abs_x = dx < 0 ? (uint32_t)-dx : (uint32_t)dx;
+    const uint32_t abs_y = dy < 0 ? (uint32_t)-dy : (uint32_t)dy;
+    const uint32_t cell = LITE_CELL_Q8;
+    const uint32_t delta_x = abs_x ? (cell << 14) / abs_x : UINT32_MAX;
+    const uint32_t delta_y = abs_y ? (cell << 14) / abs_y : UINT32_MAX;
+    const uint32_t offset_x = dx >= 0
+        ? (uint32_t)((gx + 1) * (int32_t)cell - x)
+        : (uint32_t)(x - gx * (int32_t)cell);
+    const uint32_t offset_y = dy >= 0
+        ? (uint32_t)((gy + 1) * (int32_t)cell - y)
+        : (uint32_t)(y - gy * (int32_t)cell);
+    uint32_t next_x = abs_x ? (offset_x << 14) / abs_x : UINT32_MAX;
+    uint32_t next_y = abs_y ? (offset_y << 14) / abs_y : UINT32_MAX;
+    uint32_t entry = 0;
+    RayHit hit = { LITE_MAX_DISTANCE_Q8, gx, gy };
+    for (unsigned crossed = 0; crossed < E1M1_WIDTH + E1M1_HEIGHT;
+         ++crossed) {
+        if (entry > LITE_MAX_DISTANCE_Q8) break;
+        hit.gx = gx;
+        hit.gy = gy;
+        const int ix = gx - E1M1_GX0, iy = gy - E1M1_GY0;
+        if ((unsigned)ix >= E1M1_WIDTH || (unsigned)iy >= E1M1_HEIGHT) {
+            hit.distance_q8 = entry;
+            return hit;
+        }
+        const E1M1PortalCell *special = portal_cell(gx, gy);
+        if (special) {
+            uint32_t exit = next_x < next_y ? next_x : next_y;
+            if (exit > LITE_MAX_DISTANCE_Q8) exit = LITE_MAX_DISTANCE_Q8;
+            const uint32_t exact = portal_hit_q8(special, x, y, dx, dy,
+                                                  entry, exit, door_open);
+            if (exact != UINT32_MAX) {
+                hit.distance_q8 = exact;
+                return hit;
+            }
+        } else if (e1m1_grid[iy * E1M1_WIDTH + ix]) {
+            hit.distance_q8 = entry;
+            return hit;
+        }
+        if (next_x < next_y) {
+            entry = next_x;
+            gx += step_x;
+            next_x += delta_x;
+        } else {
+            entry = next_y;
+            gy += step_y;
+            next_y += delta_y;
+        }
+    }
+    hit.distance_q8 = LITE_MAX_DISTANCE_Q8;
+    return hit;
+}
+
 #ifndef DOOM_LITE_RAY_TEST
 static void present(uint8_t *pixels) {
     ll_disp_put_area(pixels, 0, 0, LITE_W - 1u, LITE_H - 1u);
@@ -125,16 +257,21 @@ static void present(uint8_t *pixels) {
 }
 #endif
 
-static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing) {
+static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
+                       int game_mode,
+                       const uint8_t door_open[E1M1_DOOR_COUNT]) {
     uint8_t wall_top[LITE_RAYS];
     uint8_t wall_bottom[LITE_RAYS];
     uint8_t wall_shade[LITE_RAYS];
     for (unsigned ray = 0; ray < LITE_RAYS; ++ray) {
         const int offset = ((int)ray * 168) / (int)(LITE_RAYS - 1u) - 84;
         const uint16_t angle = (uint16_t)((int)facing * 4 + offset);
-        const RayHit hit = cast_ray(x, y, angle);
+        const RayHit hit = game_mode
+            ? cast_game_ray(x, y, angle, door_open) : cast_ray(x, y, angle);
         int distance = ((int)(hit.distance_q8 >> 8) *
                         sine_q14_fine((uint16_t)(offset + 256))) >> 14;
+        if (game_mode) game_wall_depth[ray] =
+            (uint16_t)(distance > 0 ? distance : 0);
         if (distance < 24) distance = 24;
         int height = 8192 / distance;
         if (height > LITE_H) height = LITE_H;
@@ -186,8 +323,120 @@ static void draw_map(uint8_t *pixels, int32_t x, int32_t y) {
 
 void DoomLite_RenderFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
                           uint8_t facing, int map_mode) {
+    game_wall_ready = 0;
     if (map_mode) draw_map(pixels, x_q8, y_q8);
-    else draw_scene(pixels, x_q8, y_q8, facing);
+    else draw_scene(pixels, x_q8, y_q8, facing, 0, NULL);
+}
+
+void DoomLite_RenderGameFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
+                              uint8_t facing, int map_mode,
+                              const uint8_t door_open[E1M1_DOOR_COUNT]) {
+    game_wall_ready = 0;
+    if (map_mode) draw_map(pixels, x_q8, y_q8);
+    else {
+        draw_scene(pixels, x_q8, y_q8, facing, 1, door_open);
+        game_wall_ready = 1;
+    }
+}
+
+typedef struct {
+    uint16_t thing_index;
+    uint16_t depth;
+    int16_t center;
+    uint8_t width, height, key;
+} GameSprite;
+
+static int drawable_thing_type(uint16_t type) {
+    return type == 5u || type == 9u || type == 3001u ||
+           type == 3002u || type == 3004u;
+}
+
+void DoomLite_RenderGameThings(uint8_t *pixels, const DoomLiteGame *game) {
+    if (!game_wall_ready || !pixels || !game) return;
+    GameSprite sprites[LITE_SPRITE_LIMIT];
+    unsigned count = 0;
+    const int32_t px = game->x_q8 / 256, py = game->y_q8 / 256;
+    const int32_t forward_x = sine_q14((uint8_t)(game->facing + 64u));
+    const int32_t forward_y = sine_q14(game->facing);
+    for (unsigned i = 0; i < E1M1_THING_COUNT; ++i) {
+        const E1M1Thing *thing = &e1m1_things[i];
+        if (!drawable_thing_type(thing->type) ||
+            !DoomLiteGame_ThingActive(game, i)) continue;
+        const int32_t dx = (int32_t)thing->x - px;
+        const int32_t dy = (int32_t)thing->y - py;
+        if (dx * dx + dy * dy > 512 * 512) continue;
+        const int32_t depth = (dx * forward_x + dy * forward_y) >> 14;
+        if (depth < 12 || depth > 512) continue;
+        const int32_t side = (-dx * forward_y + dy * forward_x) >> 14;
+        const int32_t center = LITE_W / 2 +
+                               side * LITE_PROJECTION / depth;
+        const int key = thing->type == 5u;
+        int width = (key ? 16 : 24) * LITE_PROJECTION / depth;
+        int height = (key ? 18 : 40) * LITE_PROJECTION / depth;
+        if (width < 3) width = 3;
+        if (height < 4) height = 4;
+        if (width > (key ? 40 : 60)) width = key ? 40 : 60;
+        if (height > (key ? 48 : 100)) height = key ? 48 : 100;
+        if (center + width / 2 < 0 || center - width / 2 >= LITE_W)
+            continue;
+        if (count == LITE_SPRITE_LIMIT) continue;
+        /* Furthest first, so nearer silhouettes naturally cover the far
+         * ones without a per-pixel Z buffer. */
+        unsigned at = count++;
+        while (at && sprites[at - 1u].depth < depth) {
+            sprites[at] = sprites[at - 1u];
+            --at;
+        }
+        sprites[at] = (GameSprite){ (uint16_t)i, (uint16_t)depth,
+                                     (int16_t)center, (uint8_t)width,
+                                     (uint8_t)height, (uint8_t)key };
+    }
+
+    for (unsigned i = 0; i < count; ++i) {
+        const GameSprite *sprite = &sprites[i];
+        const int left = sprite->center - sprite->width / 2;
+        const int top = (LITE_H - sprite->height) / 2;
+        const int right = left + sprite->width;
+        const int bottom = top + sprite->height;
+        for (int x = left < 0 ? 0 : left;
+             x < right && x < LITE_W; ++x) {
+            const unsigned ray = (unsigned)x / LITE_RAY_PIXELS;
+            if (sprite->depth + 3u >= game_wall_depth[ray]) continue;
+            const int local_x = x - left;
+            for (int y = top; y < bottom; ++y) {
+                const int local_y = y - top;
+                uint8_t color;
+                if (sprite->key) {
+                    /* Square bow and horizontal shaft read as a key at the
+                     * calculator's small monochrome resolution. */
+                    const int bow = sprite->width * 2 / 3;
+                    const int ring = local_x < bow &&
+                        local_y < sprite->height * 2 / 3 &&
+                        (local_x < 2 || local_x >= bow - 2 ||
+                         local_y < 2 ||
+                         local_y >= sprite->height * 2 / 3 - 2);
+                    const int stem = local_x >= bow / 2 &&
+                        local_y >= sprite->height / 2 - 2 &&
+                        local_y <= sprite->height / 2 + 2;
+                    if (!ring && !stem) continue;
+                    color = 12;
+                } else {
+                    const int head = local_y < sprite->height / 3;
+                    const int inset = head ? sprite->width / 4 :
+                        (sprite->height - local_y < sprite->height / 5 ?
+                         sprite->width / 5 : sprite->width / 10);
+                    if (local_x < inset || local_x >= sprite->width - inset)
+                        continue;
+                    color = head ? 48 : 70;
+                    if (head && local_y > sprite->height / 6 &&
+                        (local_x == sprite->width / 3 ||
+                         local_x == sprite->width * 2 / 3))
+                        color = 230;
+                }
+                pixels[y * LITE_W + x] = color;
+            }
+        }
+    }
 }
 
 #ifndef DOOM_LITE_RAY_TEST

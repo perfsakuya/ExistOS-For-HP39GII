@@ -43,9 +43,15 @@
   <div class="metric"><div class="label">混合版渲染 均 / 峰</div><div class="value" id="fastrender">—</div></div>
   <div class="metric"><div class="label">LCD 提交 均 / 峰</div><div class="value" id="fastpresent">—</div></div>
   <div class="metric"><div class="label">游戏逻辑单 tic 均 / 峰</div><div class="value" id="fasttic">—</div></div>
+  <div class="metric"><div class="label">E1M1 Game 帧率</div><div class="value" id="gamefps">—</div></div>
+  <div class="metric"><div class="label">Game 逻辑 tic 均 / 峰</div><div class="value" id="gamelogic">—</div></div>
+  <div class="metric"><div class="label">Game 渲染 均 / 峰</div><div class="value" id="gamerender">—</div></div>
+  <div class="metric"><div class="label">Game LCD 均 / 峰</div><div class="value" id="gamelcd">—</div></div>
+  <div class="metric"><div class="label">Game 帧间隔 均 / 峰</div><div class="value" id="gameinterval">—</div></div>
 </div>
 <div class="events"><span id="literender">Lite 绘制 —</span><span id="litequeue">Lite 显示提交 —</span><span id="litemap">Lite 地图 —</span></div>
 <div class="events"><span id="fastgame">混合版状态 —</span></div>
+<div class="events"><span id="gamestate">Game 状态 —</span><span id="gamedrops">Game 跳过的逻辑 tic —</span></div>
 <div class="events"><span id="logic">游戏逻辑 —</span><span id="draw">绘制含显示 —</span><span id="convert">灰度转换 —</span><span id="display">显示提交 —</span><span id="other">引擎及其他 —</span></div>
 <div class="events"><span id="setup">视角准备 —</span><span id="bsp">墙面/BSP —</span><span id="planes">地板/天花板 —</span><span id="masked">精灵/遮挡 —</span></div>
 <div class="events" aria-live="polite"><span id="stage">等待启动</span><span id="starts">启动 0</span><span id="zone">交换区校验 0</span><span id="frames">最新帧 0</span><span id="exits">退出 0</span><span id="errors">错误 0</span><span id="panics">Panic 0</span></div>
@@ -80,6 +86,15 @@ async function refresh() {
     byId('fastrender').textContent = s.fast ? `${s.fast.render_ms} / ${s.fast.max_render_ms ?? '—'} ms` : '—';
     byId('fastpresent').textContent = s.fast ? `${s.fast.present_ms} / ${s.fast.max_present_ms ?? '—'} ms` : '—';
     byId('fasttic').textContent = s.tic ? `${s.tic.average_ms} / ${s.tic.max_ms} ms` : '—';
+    byId('gamefps').textContent = s.game ? `${s.game.fps} fps` : '—';
+    byId('gamelogic').textContent = s.game ? `${s.game.logic_ms ?? '—'} / ${s.game.logic_max_ms} ms` : '—';
+    byId('gamerender').textContent = s.game ? `${s.game.render_ms} / ${s.game.render_max_ms} ms` : '—';
+    byId('gamelcd').textContent = s.game ? `${s.game.lcd_ms} / ${s.game.lcd_max_ms} ms` : '—';
+    byId('gameinterval').textContent = s.game ? `${s.game.interval_ms} / ${s.game.interval_max_ms} ms` : '—';
+    byId('gamestate').textContent = s.game
+      ? `Game HP ${s.game.health ?? '—'} · 弹药 ${s.game.ammo ?? '—'} · 击杀 ${s.game.kills ?? '—'} · 蓝钥匙 ${s.game.blue_key == null ? '—' : s.game.blue_key ? '有' : '无'} · 地图 ${s.game.map == null ? '—' : s.game.map ? '开' : '关'}`
+      : 'Game 状态 —';
+    byId('gamedrops').textContent = `Game 跳过的逻辑 tic ${s.game?.dropped_ticks ?? '—'}`;
     byId('fastgame').textContent = s.fast
       ? `混合版 HP ${s.fast.health ?? '—'} · 击杀 ${s.fast.kills ?? '—'} · 蓝钥匙 ${s.fast.blue_key == null ? '—' : s.fast.blue_key ? '有' : '无'} · 地图 ${s.fast.map == null ? '—' : s.fast.map ? '开' : '关'}`
       : '混合版状态 —';

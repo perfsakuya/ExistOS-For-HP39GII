@@ -34,19 +34,25 @@ aux_source_directory(./applications                                  SYS_SRCS)
 aux_source_directory(./applications/user/notes                       SYS_SRCS)
 list(APPEND SYS_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_lite/DoomLite.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_lite/DoomLiteGame.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_lite/DoomGameApp.c
 )
-file(GLOB DOOM_ENGINE_SRCS CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_port/gbadoom/source/*.c)
-set(DOOM_IWAD_PATH
-    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_port/data/freedoom-e1m1-gba.wad)
-configure_file(applications/user/doom_port/doom_iwad.S.in
-    ${CMAKE_CURRENT_BINARY_DIR}/doom_iwad.S @ONLY)
-list(APPEND SYS_SRCS ${DOOM_ENGINE_SRCS}
-    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_port/DoomPort.c
-    ${CMAKE_CURRENT_BINARY_DIR}/doom_iwad.S)
-set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/doom_iwad.S
-    PROPERTIES OBJECT_DEPENDS ${DOOM_IWAD_PATH})
-include_directories(./applications/user/doom_port/gbadoom/include)
+option(SKYOS_BUILD_LEGACY_DOOM "Build the experimental full Doom ports" OFF)
+if(SKYOS_BUILD_LEGACY_DOOM)
+    file(GLOB DOOM_ENGINE_SRCS CONFIGURE_DEPENDS
+        ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_port/gbadoom/source/*.c)
+    set(DOOM_IWAD_PATH
+        ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_port/data/freedoom-e1m1-gba.wad)
+    configure_file(applications/user/doom_port/doom_iwad.S.in
+        ${CMAKE_CURRENT_BINARY_DIR}/doom_iwad.S @ONLY)
+    list(APPEND SYS_SRCS ${DOOM_ENGINE_SRCS}
+        ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_port/DoomPort.c
+        ${CMAKE_CURRENT_BINARY_DIR}/doom_iwad.S)
+    set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/doom_iwad.S
+        PROPERTIES OBJECT_DEPENDS ${DOOM_IWAD_PATH})
+    include_directories(./applications/user/doom_port/gbadoom/include)
+    add_compile_definitions(SKYOS_BUILD_LEGACY_DOOM=1)
+endif()
 add_compile_definitions(SKYOS)
 aux_source_directory(./kernel/scheduler/freertos/core                SYS_SRCS)
 aux_source_directory(./kernel/scheduler/freertos/port                SYS_SRCS)

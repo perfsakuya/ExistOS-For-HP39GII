@@ -124,6 +124,42 @@ class DashboardStateTest(unittest.TestCase):
         self.assertEqual(s["mode"], "hybrid")
         self.assertEqual(s["fast"]["max_interval_ms"], 46)
 
+    def test_compact_game_metrics_and_exit_are_session_scoped(self):
+        previous = (
+            "DOOM_MODE fast=1\nDOOM_START allocated=1\n"
+            "DOOM_FAST frames=32 elapsed_ms=1100 render_ms=320 present_ms=384 "
+            "max_interval_ms=41\n"
+            "DOOMG_BOOT phase=task_start ms=1000\n"
+            "DOOMG_BOOT phase=ready ms=1020\n"
+            "DOOMG_PERF frames=32 elapsed_ms=1064 logic_ticks=35 "
+            "logic_total_ms=70 logic_max_ms=4 logic_total_us=70350 logic_max_us=3600 "
+            "render_total_ms=320 render_max_ms=14 render_total_us=320000 render_max_us=14100 "
+            "lcd_total_ms=384 lcd_max_ms=16 lcd_total_us=384000 lcd_max_us=15900 "
+            "interval_samples=31 interval_total_ms=1031 interval_max_ms=44 dropped_ticks=0 "
+            "hp=92 ammo=48 kills=1 blue=1 map=0 x=-416 y=256\n"
+        )
+        s = self.read(previous)
+        self.assertEqual(s["mode"], "game")
+        self.assertEqual(s["stage"], "E1M1 Game 运行中")
+        self.assertIsNone(s["fast"])
+        self.assertEqual(s["game"]["fps"], 30.08)
+        self.assertEqual(s["game"]["logic_ms"], 2.01)
+        self.assertEqual(s["game"]["logic_max_ms"], 3.6)
+        self.assertEqual(s["game"]["render_ms"], 10)
+        self.assertEqual(s["game"]["lcd_ms"], 12)
+        self.assertEqual(s["game"]["interval_max_ms"], 44)
+        self.assertEqual(s["game"]["interval_ms"], 33.26)
+        self.assertTrue(s["game"]["blue_key"])
+        s = self.read(previous + "DOOMG_EXIT phase=ui_resume_begin ms=2999\n")
+        self.assertEqual(s["stage"], "E1M1 Game 退出处理中")
+        s = self.read(previous + "DOOMG_EXIT phase=ui_resume_done ms=3000\n")
+        self.assertEqual(s["stage"], "E1M1 Game 已退出")
+        s = self.read(previous + "DOOMG_EXIT phase=ui_resume_done ms=3000\n"
+                      "DOOMLITE_PERF frames=32 elapsed_ms=1060 render_ms=300 "
+                      "queue_ms=400 max_interval_ms=47 map=0\n")
+        self.assertEqual(s["mode"], "lite")
+        self.assertIsNone(s["game"])
+
 
 if __name__ == "__main__":
     unittest.main()

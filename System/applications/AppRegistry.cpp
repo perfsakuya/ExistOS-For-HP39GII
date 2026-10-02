@@ -3,10 +3,13 @@
 extern "C" {
 void StartKhiCAS(void);
 void Notes_Start(void);
+#ifdef SKYOS_BUILD_LEGACY_DOOM
 void DoomPort_Start(void);
 void DoomPort_StartFlat(void);
 void DoomPort_StartFast(void);
+#endif
 void DoomLite_Start(void);
+void DoomGame_Start(void);
 extern const unsigned char gImage_khicas_ico[48 * 48];
 extern const unsigned char gImage_notes_ico[48 * 48];
 }
@@ -14,10 +17,13 @@ extern const unsigned char gImage_notes_ico[48 * 48];
 static const AppEntry apps[] = {
     {"KhiCAS", gImage_khicas_ico, StartKhiCAS},
     {"Notes", gImage_notes_ico, Notes_Start},
+    {"Lite", gImage_notes_ico, DoomLite_Start},
+    {"Game", gImage_notes_ico, DoomGame_Start},
+#ifdef SKYOS_BUILD_LEGACY_DOOM
     {"E1M1", gImage_notes_ico, DoomPort_Start},
     {"Flat", gImage_notes_ico, DoomPort_StartFlat},
-    {"Lite", gImage_notes_ico, DoomLite_Start},
     {"Hybrid", gImage_notes_ico, DoomPort_StartFast},
+#endif
 };
 
 extern "C" size_t AppRegistry_Count(void) {
