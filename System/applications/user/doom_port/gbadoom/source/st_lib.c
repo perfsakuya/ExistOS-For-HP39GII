@@ -308,8 +308,13 @@ void ST_refreshBackground(void)
 {
     if (_g->st_statusbaron)
     {
+#ifdef SKYOS
+        // STBAR is a compressed 320 x 32 Doom patch, not raw framebuffer data.
+        V_DrawStatusBarPatch(ST_SCALED_Y, _g->stbarbg);
+#else
         const unsigned int st_offset = ((SCREENHEIGHT-ST_SCALED_HEIGHT)*120);
 
         CpuBlockCopy(&_g->screens[0].data[st_offset], _g->stbarbg, _g->stbar_len);
+#endif
     }
 }

@@ -97,6 +97,10 @@ void V_DrawPatch(int x, int y, int scrn, const patch_t* patch);
 
 void V_DrawPatchNoScale(int x, int y, const patch_t* patch);
 
+#ifdef SKYOS
+void V_DrawStatusBarPatch(int y, const patch_t* patch);
+#endif
+
 
 // V_DrawNamePatch - Draws the patch from lump "name"
 #define V_DrawNamePatch(x,y,s,n,t,f) V_DrawNumPatch(x,y,s,W_GetNumForName(n),t,f)

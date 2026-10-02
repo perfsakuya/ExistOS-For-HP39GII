@@ -114,6 +114,9 @@ void V_DrawPatch(int x, int y, int scrn, const patch_t* patch)
         if(dc_x < 0)
             continue;
 
+        if (colindex < 0 || colindex >= patch->width)
+            continue;
+
         const column_t* column = (const column_t *)((const byte*)patch + patch->columnofs[colindex]);
 
         if (dc_x >= 240)
@@ -131,19 +134,21 @@ void V_DrawPatch(int x, int y, int scrn, const patch_t* patch)
             if ((dc_yl >= SCREENHEIGHT) || (dc_yl > bottom))
                 break;
 
-            int count = (dc_yh - dc_yl);
-
-            byte* dest = byte_topleft + (dc_yl*byte_pitch) + dc_x;
-
             const fixed_t fracstep = DYI;
-            fixed_t frac = 0;
+            const int first_y = dc_yl < 0 ? 0 : dc_yl;
+            const int last_y = dc_yh > SCREENHEIGHT ? SCREENHEIGHT : dc_yh;
+            fixed_t frac = (first_y - dc_yl) * fracstep;
+            byte* dest = byte_topleft + (first_y*byte_pitch) + dc_x;
 
             // Inner loop that does the actual texture mapping,
             //  e.g. a DDA-lile scaling.
             // This is as fast as it gets.
-            while (count--)
+            for (int draw_y = first_y; draw_y < last_y; ++draw_y)
             {
-                unsigned short color = source[frac >> FRACBITS];
+                const int source_y = frac >> FRACBITS;
+                if (source_y >= column->length)
+                    break;
+                unsigned short color = source[source_y];
 
                 //The GBA must write in 16bits.
                 if((unsigned int)dest & 1)
@@ -173,6 +178,38 @@ void V_DrawPatch(int x, int y, int scrn, const patch_t* patch)
         }
     }
 }
+
+#ifdef SKYOS
+void V_DrawStatusBarPatch(int y, const patch_t* patch)
+{
+    if (!patch || patch->width <= 0)
+        return;
+
+    // The WAD stores 320 source columns. The framebuffer has 240 bytes per
+    // row, and the status bar retains its original 32-pixel height.
+    const int screen_width = SCREENPITCH * 2;
+    const int top = y - patch->topoffset;
+    byte* screen = (byte*)_g->screens[0].data;
+
+    for (int x = 0; x < screen_width; ++x)
+    {
+        const int source_x = (x * patch->width) / screen_width;
+        const column_t* column = (const column_t*)((const byte*)patch + patch->columnofs[source_x]);
+        while (column->topdelta != 0xff)
+        {
+            const byte* source = (const byte*)column + 3;
+            const int first_y = top + column->topdelta;
+            for (int row = 0; row < column->length; ++row)
+            {
+                const int screen_y = first_y + row;
+                if ((unsigned)screen_y < (unsigned)SCREENHEIGHT)
+                    screen[screen_y * screen_width + x] = source[row];
+            }
+            column = (const column_t*)((const byte*)column + column->length + 4);
+        }
+    }
+}
+#endif
 
 
 // CPhipps - some simple, useful wrappers for that function, for drawing patches from wads

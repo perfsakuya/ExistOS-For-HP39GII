@@ -56,6 +56,7 @@ static uint32_t render_bsp_ms;
 static uint32_t render_planes_ms;
 static uint32_t render_masked_ms;
 static unsigned render_samples;
+int SkyOS_DoomFlatWalls;
 
 /* The display FIFO has four entries. Five one-pixel requests issued after
  * the scene force its source buffer to have been consumed before reuse. */
@@ -257,6 +258,7 @@ static void doom_task(void *unused) {
     }
     printf("DOOM_BUFFERS ui=%p game=%p lcd=%p\n",
            ui_pixels, game_pixels, lcd_pixels);
+    printf("DOOM_MODE flat_walls=%d\n", SkyOS_DoomFlatWalls);
     // Remove the suspended UI from the unused LCD margins before the first
     // game frame.
     memset(ui_pixels, 0, LCD_PIX_W * LCD_PIX_H);
@@ -293,12 +295,16 @@ done:
     vTaskDelete(NULL);
 }
 
-void DoomPort_Start(void) {
+static void doom_start(int flat_walls) {
     if (app_running) return;
     app_running = 1;
+    SkyOS_DoomFlatWalls = flat_walls;
     if (xTaskCreate(doom_task, "Doom", 4096, NULL,
                     configMAX_PRIORITIES - 3, NULL) != pdPASS) {
         app_running = 0;
         printf("DOOM_ERROR task allocation\n");
     }
 }
+
+void DoomPort_Start(void) { doom_start(0); }
+void DoomPort_StartFlat(void) { doom_start(1); }

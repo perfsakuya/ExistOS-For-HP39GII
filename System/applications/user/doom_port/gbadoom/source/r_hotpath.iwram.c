@@ -1910,8 +1910,36 @@ static const byte* R_ComposeColumn(const unsigned int texture, const texture_t* 
     return colcache;
 }
 
+#ifdef SKYOS
+extern int SkyOS_DoomFlatWalls;
+#endif
+
 static void R_DrawSegTextureColumn(unsigned int texture, int texcolumn, draw_column_vars_t* dcvars)
 {
+#ifdef SKYOS
+    if (SkyOS_DoomFlatWalls)
+    {
+        // Keep BSP, wall geometry, clipping and lighting, but skip texture
+        // lookup, composition and per-pixel sampling for a measured A/B run.
+        int top = dcvars->yl < 0 ? 0 : dcvars->yl;
+        int bottom = dcvars->yh >= viewheight ? viewheight - 1 : dcvars->yh;
+        if ((unsigned)dcvars->x < (unsigned)SCREENWIDTH && top <= bottom)
+        {
+            const byte sample = (byte)(64u + ((texture * 13u) & 63u));
+            const byte color = dcvars->colormap
+                ? dcvars->colormap[sample] : sample;
+            const unsigned short packed = color | (color << 8);
+            unsigned short* dest = drawvars.byte_topleft
+                + ScreenYToOffset(top) + dcvars->x;
+            for (int row = top; row <= bottom; ++row)
+            {
+                *dest = packed;
+                dest += SCREENWIDTH;
+            }
+        }
+        return;
+    }
+#endif
     const texture_t* tex = R_GetOrLoadTexture(texture);
 
     if(tex->overlapped == 0)
@@ -2964,41 +2992,39 @@ void V_DrawPatchNoScale(int x, int y, const patch_t* patch)
     y -= patch->topoffset;
     x -= patch->leftoffset;
 
-    byte* desttop = (byte*)_g->screens[0].data;
-    desttop += (ScreenYToOffset(y) << 1) + x;
+    byte* screen = (byte*)_g->screens[0].data;
+    const unsigned int width = patch->width;
 
-    unsigned int width = patch->width;
-
-    for (unsigned int col = 0; col < width; col++, desttop++)
+    for (unsigned int col = 0; col < width; col++)
     {
+        const int screen_x = x + (int)col;
+        if ((unsigned)screen_x >= (unsigned)(SCREENPITCH * 2))
+            continue;
+
         const column_t* column = (const column_t*)((const byte*)patch + patch->columnofs[col]);
 
-        unsigned int odd_addr = (size_t)desttop & 1;
-
-        byte* desttop_even = (byte*)((size_t)desttop & ~1);
-
-        // step through the posts in a column
+        // Clip every post before touching the packed framebuffer.
         while (column->topdelta != 0xff)
         {
             const byte* source = (const byte*)column + 3;
-            byte* dest = desttop_even + (ScreenYToOffset(column->topdelta) << 1);
-
-            unsigned int count = column->length;
-
-            while (count--)
+            const int first_y = y + column->topdelta;
+            for (unsigned int row = 0; row < column->length; ++row)
             {
-                unsigned int color = *source++;
-                volatile unsigned short* dest16 = (volatile unsigned short*)dest;
+                const int screen_y = first_y + (int)row;
+                if ((unsigned)screen_y >= (unsigned)SCREENHEIGHT)
+                    continue;
 
-                unsigned int old = *dest16;
+                byte* dest = screen + (ScreenYToOffset(screen_y) << 1) + screen_x;
+                const unsigned int color = source[row];
+                volatile unsigned short* dest16 = (volatile unsigned short*)(
+                    (screen_x & 1) ? dest - 1 : dest);
+                const unsigned int old = *dest16;
 
-                //The GBA must write in 16bits.
-                if(odd_addr)
+                // GBA framebuffers require aligned 16-bit writes.
+                if (screen_x & 1)
                     *dest16 = (old & 0xff) | (color << 8);
                 else
-                    *dest16 = ((color & 0xff) | (old & 0xff00));
-
-                dest += 240;
+                    *dest16 = (color & 0xff) | (old & 0xff00);
             }
 
             column = (const column_t*)((const byte*)column + column->length + 4);

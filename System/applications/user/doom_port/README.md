@@ -35,6 +35,20 @@ masked sprite passes. Each counter covers 16 rendered views.
 The SkyOS automap uses a light background and dark line palette for the
 monochrome LCD.
 
+`Freedoom Flat` is a profiling variant of the same E1M1 spawn. It keeps BSP
+traversal, wall geometry, clipping, lighting, floors, and sprites but fills
+walls with one lit palette color per texture ID. It skips wall texture cache
+lookups, composition, and sampling. The serial log emits `DOOM_MODE
+flat_walls=0/1` to identify each run. Compare `DOOM_RENDER` and `DOOM_PERF`
+over at least 16 stationary frames in both apps; this variant is an upper
+bound on wall texture savings, not an intended final visual design.
+
+The WAD's `STBAR` is a compressed 320 × 32 patch (13,128 bytes). The old
+status-bar code copied the lump directly into a 240 × 32 framebuffer tail
+(7,680 bytes), overwriting 5,448 bytes beyond the frame. The SkyOS path now
+decodes the patch, scales its columns to 240 pixels, and clips patch drawing
+to the 120 screen rows. The frame guards remain active to catch other writes.
+
 The embedded data file was produced from `freedoom1.wad` in the official
 Freedoom 0.13.0 release using `tools/doom/trim_e1m1.py`, GBADoom's
 `GbaWadUtil.exe`, and `tools/doom/c_array_to_bin.py`. See `data/COPYING.txt`
@@ -62,6 +76,16 @@ System image with the original 6 MB loader.
 - The palette lookup and screen-clear build compiles with GNU Arm Embedded
   Toolchain 10.3-2021.10 and passes the System image size check. Hardware
   performance measurements for this revision are pending.
+- The wider display and automap were confirmed on hardware. A later F6 exit
+  panicked because the status bar wrote beyond the framebuffer. The isolated
+  framebuffer exposed the first changed guard byte (`109`), which exactly
+  matches `STBAR[7680]` in the bundled WAD. Its launch Panic resolved to
+  `free()`, after the 5,448-byte overwrite crossed the 4 KiB guard and damaged
+  the adjacent allocation. The status-bar decoder and draw clipping compile.
+  The replacement image ran 15 frames on the calculator and logged a complete
+  F6 exit through `DOOM_CLEANUP ui_resumed`, with no guard error; the UI task
+  resumed with available stack. Screen and automap appearance await the user's
+  observation.
 
 The application needs a separate hardware launch test after flashing. If
 `DOOM_ERROR` appears or the device panics, collect the serial log and screen
