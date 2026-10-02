@@ -1,0 +1,15 @@
+refs:
+  bit 0: count (num)
+computeds:
+  doubled: num <- {count}
+effects:
+  eff_0: rows [3, 4) mask 0x1 {count}
+  eff_1: rows [5, 6) mask 0x1 {count}
+inputs:
+  buttons: A, Right, Left, Up, Down
+  relative axes: none
+
+state RAM: 4 B scalars/strings + 0 B pools + 0 B computed views
+overlay RAM: 0 B in 0 shared slots (0 frame-local temps off the C stack)
+reactive tables: 1 dirty bits, 1 validity bits, 2 effects
+ROM data: 74 B strings + 760 B font + 17 B style data

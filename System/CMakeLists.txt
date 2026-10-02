@@ -32,6 +32,13 @@ aux_source_directory(./graphics                                      SYS_SRCS)
 aux_source_directory(./utils                                         SYS_SRCS)
 aux_source_directory(./applications                                  SYS_SRCS)
 aux_source_directory(./applications/user/notes                       SYS_SRCS)
+list(APPEND SYS_SRCS
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/pocket_vapor_demo/gen_app.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/pocket_vapor_demo/VaporCore.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/pocket_vapor_demo/VaporDisplay.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/pocket_vapor_demo/VaporDemo.c
+)
+include_directories(./applications/user/pocket_vapor_demo/runtime)
 aux_source_directory(./kernel/scheduler/freertos/core                SYS_SRCS)
 aux_source_directory(./kernel/scheduler/freertos/port                SYS_SRCS)
 aux_source_directory(./kernel/scheduler/freertos/memory              SYS_SRCS)

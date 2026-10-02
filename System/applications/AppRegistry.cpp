@@ -3,6 +3,7 @@
 extern "C" {
 void StartKhiCAS(void);
 void Notes_Start(void);
+void VaporDemo_Start(void);
 extern const unsigned char gImage_khicas_ico[48 * 48];
 extern const unsigned char gImage_notes_ico[48 * 48];
 }
@@ -10,6 +11,7 @@ extern const unsigned char gImage_notes_ico[48 * 48];
 static const AppEntry apps[] = {
     {"KhiCAS", gImage_khicas_ico, StartKhiCAS},
     {"Notes", gImage_notes_ico, Notes_Start},
+    {"Vapor Test", gImage_notes_ico, VaporDemo_Start},
 };
 
 extern "C" size_t AppRegistry_Count(void) {
