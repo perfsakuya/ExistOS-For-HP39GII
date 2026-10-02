@@ -3,10 +3,9 @@
 extern "C" {
 void StartKhiCAS(void);
 void Notes_Start(void);
-void VaporDemo_Start(void);
-void DoomProbe_Start(void);
 void DoomPort_Start(void);
 void DoomPort_StartFlat(void);
+void DoomLite_Start(void);
 extern const unsigned char gImage_khicas_ico[48 * 48];
 extern const unsigned char gImage_notes_ico[48 * 48];
 }
@@ -14,10 +13,9 @@ extern const unsigned char gImage_notes_ico[48 * 48];
 static const AppEntry apps[] = {
     {"KhiCAS", gImage_khicas_ico, StartKhiCAS},
     {"Notes", gImage_notes_ico, Notes_Start},
-    {"Vapor Test", gImage_notes_ico, VaporDemo_Start},
-    {"Doom Probe", gImage_notes_ico, DoomProbe_Start},
-    {"Freedoom E1M1", gImage_notes_ico, DoomPort_Start},
-    {"Freedoom Flat", gImage_notes_ico, DoomPort_StartFlat},
+    {"E1M1", gImage_notes_ico, DoomPort_Start},
+    {"Flat", gImage_notes_ico, DoomPort_StartFlat},
+    {"Lite", gImage_notes_ico, DoomLite_Start},
 };
 
 extern "C" size_t AppRegistry_Count(void) {

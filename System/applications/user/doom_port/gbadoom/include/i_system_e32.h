@@ -25,6 +25,7 @@ void I_FinishUpdate_e32(const byte* srcBuffer, const byte* pallete, const unsign
 void I_SetPallete_e32(const byte* pallete);
 
 void I_ProcessKeyEvents();
+int SkyOS_DoomExitRequested(void);
 
 int I_GetTime_e32(void);
 

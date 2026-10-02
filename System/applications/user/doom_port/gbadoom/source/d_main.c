@@ -68,6 +68,9 @@
 #include "r_draw.h"
 #include "r_main.h"
 #include "d_main.h"
+#ifdef SKYOS
+#include "i_system_e32.h"
+#endif
 #include "lprintf.h"  // jff 08/03/98 - declaration of lprintf
 #include "am_map.h"
 #include "m_cheat.h"
@@ -278,6 +281,10 @@ static void D_DoomLoop(void)
         if (_g->singletics)
         {
             I_StartTic ();
+#ifdef SKYOS
+            if (SkyOS_DoomExitRequested())
+                return;
+#endif
             G_BuildTiccmd (&_g->netcmd);
 
             if (_g->advancedemo)
@@ -291,6 +298,11 @@ static void D_DoomLoop(void)
         }
         else
             TryRunTics (); // will run at least one tic
+
+#ifdef SKYOS
+        if (SkyOS_DoomExitRequested())
+            return;
+#endif
 
         // killough 3/16/98: change consoleplayer to displayplayer
         if (_g->player.mo) // cph 2002/08/10

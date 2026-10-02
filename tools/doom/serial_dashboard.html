@@ -36,10 +36,14 @@
   <div class="metric"><div class="label">ZRAM 占用</div><div class="value" id="zram">—</div></div>
   <div class="metric"><div class="label">Freedoom 帧率</div><div class="value" id="fps">—</div></div>
   <div class="metric"><div class="label">平均每帧耗时</div><div class="value" id="frametime">—</div></div>
+  <div class="metric"><div class="label">E1M1 Lite 帧率</div><div class="value" id="litefps">—</div></div>
+  <div class="metric"><div class="label">Lite 最长帧间隔</div><div class="value" id="litemax">—</div></div>
 </div>
+<div class="events"><span id="literender">Lite 绘制 —</span><span id="litequeue">Lite 显示提交 —</span><span id="litemap">Lite 地图 —</span></div>
 <div class="events"><span id="logic">游戏逻辑 —</span><span id="draw">绘制含显示 —</span><span id="convert">灰度转换 —</span><span id="display">显示提交 —</span><span id="other">引擎及其他 —</span></div>
 <div class="events"><span id="setup">视角准备 —</span><span id="bsp">墙面/BSP —</span><span id="planes">地板/天花板 —</span><span id="masked">精灵/遮挡 —</span></div>
 <div class="events" aria-live="polite"><span id="stage">等待启动</span><span id="starts">启动 0</span><span id="zone">交换区校验 0</span><span id="frames">最新帧 0</span><span id="exits">退出 0</span><span id="errors">错误 0</span><span id="panics">Panic 0</span></div>
+<div class="events" aria-live="polite"><span id="diagnostic">退出诊断 —</span></div>
 <div id="fault" class="fault" role="status"></div>
 <h2>内存变化 · KB</h2><svg viewBox="0 0 400 90" preserveAspectRatio="none" aria-label="最近 40 次 System 内存采样"><polyline id="memory-line" points=""></polyline></svg>
 <div class="toolbar"><h2>原始串口输出</h2><a href="/log" target="_blank" rel="noopener">打开完整日志</a></div>
@@ -57,12 +61,17 @@ async function refresh() {
     const response = await fetch('/api/state', {cache: 'no-store'});
     const s = await response.json();
     const status = byId('status');
-    status.textContent = s.connected ? `${s.serial_name} 日志活跃` : `等待 ${s.serial_name} 日志`;
+    status.textContent = s.connected ? `${s.serial_name} 日志活跃 · ${s.log_name}` : `等待 ${s.serial_name} 日志 · ${s.log_name}`;
     status.className = 'status ' + (s.connected ? 'ok' : 'bad');
     byId('mem').textContent = s.memory_kb ? `${s.memory_kb[0]} / ${s.memory_kb[1]} KB` : '—';
     byId('zram').textContent = s.zram_kb ? `${s.zram_kb[0]} / ${s.zram_kb[1]} KB` : '—';
     byId('fps').textContent = s.performance?.fps != null ? `${s.performance.fps} fps` : '—';
     byId('frametime').textContent = s.performance ? `${s.performance.total_ms} ms` : '—';
+    byId('litefps').textContent = s.lite ? `${s.lite.fps} fps` : '—';
+    byId('litemax').textContent = s.lite ? `${s.lite.max_interval_ms} ms` : '—';
+    byId('literender').textContent = `Lite 绘制 ${s.lite?.render_ms ?? '—'} ms/帧`;
+    byId('litequeue').textContent = `Lite 显示提交 ${s.lite?.queue_ms ?? '—'} ms/帧`;
+    byId('litemap').textContent = `Lite 地图 ${s.lite ? (s.lite.map ? '开' : '关') : '—'}`;
     byId('logic').textContent = `游戏逻辑 ${s.phases?.logic_ms ?? '—'} ms`;
     byId('draw').textContent = `绘制含显示 ${s.phases?.draw_ms ?? '—'} ms`;
     byId('convert').textContent = `灰度转换 ${s.performance?.convert_ms ?? '—'} ms`;
@@ -79,6 +88,9 @@ async function refresh() {
     byId('exits').textContent = `退出 ${s.exits}`;
     byId('errors').textContent = `错误 ${s.errors}`;
     byId('panics').textContent = `Panic ${s.panics}`;
+    byId('diagnostic').textContent = s.diagnostic
+      ? `退出诊断 ${s.diagnostic.seconds ?? '—'} 秒 · ${s.diagnostic.last_stage ?? '资源暂留'} · 按键 ${s.diagnostic.key ?? '—'}`
+      : '退出诊断 —';
     byId('fault').textContent = s.latest_error ? `最近错误：${s.latest_error}` : '';
     plot(s.memory_history);
     const log = byId('log');

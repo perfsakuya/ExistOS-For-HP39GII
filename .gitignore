@@ -1,5 +1,8 @@
 # MicroPython
 TestELF/MicroPython/port/ExistOS/build/
+# Python tool caches
+__pycache__/
+*.pyc
 # Prerequisites
 *.d
 

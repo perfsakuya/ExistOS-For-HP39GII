@@ -28,6 +28,14 @@ private:
         }
     }
 
+    void flush_rows(uint32_t y0, uint32_t y1) {
+        if (!disp_buf || y0 >= (uint32_t)disp_h || y1 < y0)
+            return;
+        if (y1 >= (uint32_t)disp_h)
+            y1 = (uint32_t)disp_h - 1u;
+        drawf(disp_buf + y0 * disp_w, 0, y0, disp_w - 1, y1);
+    }
+
 public:
     uint8_t *frameBuffer() const { return disp_buf; }
 
@@ -60,7 +68,7 @@ public:
 
     void draw_point(uint32_t x, uint32_t y, uint8_t c) {
         buf_set(x, y, c);
-        this->drawf(&this->disp_buf[y * this->disp_w], 0, y, this->disp_w - 1, y);
+        flush_rows(y, y);
     }
     void draw_line(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint8_t c) {
         if (y0 == y1) {
@@ -92,7 +100,7 @@ public:
             }
         }
     draw_fin:
-        this->drawf(&this->disp_buf[y0 * this->disp_w], 0, y0, this->disp_w - 1, y1);
+        flush_rows(y0, y1);
     }
     void draw_box(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, int16_t borderColor, int16_t fillColor) {
         if (fillColor != -1) {
@@ -110,13 +118,14 @@ public:
     }
 
     void draw_bmp(char *src, uint32_t x0, uint32_t y0, uint32_t w, uint32_t h) {
+        if (!w || !h) return;
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
                 buf_set(x0 + x, y0 + y, src[x + y * w]);
             }
         }
 
-        this->drawf(&this->disp_buf[y0 * this->disp_w], 0, y0, this->disp_w - 1, y0 + h);
+        flush_rows(y0, y0 + h - 1u);
     }
 
     void draw_char_ascii(uint32_t x0, uint32_t y0, char ch, uint8_t fontSize, uint8_t fg, int16_t bg) {
@@ -169,7 +178,7 @@ public:
             pCh++;
         }
 
-        this->drawf(&this->disp_buf[y0 * this->disp_w], 0, y0, this->disp_w - 1, y0 + font_h - 1);
+        flush_rows(y0, y0 + font_h - 1u);
     }
     void draw_char_GBK16(uint32_t x0, uint32_t y0, uint16_t c, uint8_t fg, int16_t bg) {
         extern uint32_t fonts_hzk_start;
@@ -212,7 +221,7 @@ public:
             y++;
         }
         // printf("GBK PRINT:%02x\n", c);
-        this->drawf(&this->disp_buf[y0 * this->disp_w], 0, y0, this->disp_w - 1, y0 + 16);
+        flush_rows(y0, y0 + 15u);
     }
     int draw_printf(uint32_t x0, uint32_t y0, uint8_t fontSize, uint8_t fg, int16_t bg, const char *format, ...) {
         va_list aptr;
@@ -425,7 +434,7 @@ public:
         this->disp = disp;
         memset(this->funcKey, 0, sizeof(this->funcKey));
         if (title) {
-            this->title = (char *)pvPortMalloc(strlen(title));
+            this->title = (char *)pvPortMalloc(strlen(title) + 1u);
             strcpy(this->title, title);
             this->content_x0 = x0 + 1;
             this->content_y0 = y0 + WIN_DEFAULT_FONTSIZE - 3;

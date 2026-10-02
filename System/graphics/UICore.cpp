@@ -1234,8 +1234,6 @@ void UI_keyScanner(void *_) {
                 drawPage(curPage);
                 UIForceRefresh = false;
                 
-                // 在界面刷新时保存配置
-                config_save();
             }
         }
     }

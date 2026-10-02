@@ -1,5 +1,7 @@
 # Pocket Vapor / SkyOS 可行性验证
 
+此目录保留历史概念验证源码和实机记录；当前 System 镜像不再编译或显示 `Vapor Test`。
+
 此目录是一个可编译的概念验证。它把受限的 Vue 风格 TypeScript/TSX 在电脑上提前编译为 C，再作为 `Vapor Test` 应用链接进 SkyOS。计算器上没有 JavaScript 引擎。上游 [Pocket Vapor](https://github.com/pocket-nexus/pocket-vapor) 是独立的早期实验，并非 PocketJS 主线或任意 TypeScript 应用的兼容运行时。本次验证固定在上游提交 `99e8e324192a285be6cc4443042dbb9cbd9426de`。
 
 ## 已做的验证

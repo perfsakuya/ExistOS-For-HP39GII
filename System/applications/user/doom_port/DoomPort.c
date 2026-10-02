@@ -29,8 +29,10 @@
 #define DOOM_X ((LCD_PIX_W - DOOM_LCD_WIDTH) / 2u)
 #define DOOM_Y ((LCD_PIX_H - DOOM_HEIGHT) / 2u)
 
+
 extern uint32_t getHeapAllocateSize(void);
 extern void *mainzone;
+extern volatile uint32_t ulCriticalNesting;
 
 static unsigned short *game_pixels;
 static uint8_t *game_buffer_allocation;
@@ -40,6 +42,7 @@ static volatile int app_running;
 static uint16_t previous_key;
 static int previous_code;
 static unsigned frames;
+static volatile int exit_requested;
 static uint8_t gray_palette[256];
 static const byte *gray_palette_source;
 static uint8_t gray_palette_ready;
@@ -61,8 +64,9 @@ int SkyOS_DoomFlatWalls;
 /* The display FIFO has four entries. Five one-pixel requests issued after
  * the scene force its source buffer to have been consumed before reuse. */
 static void display_barrier(void) {
+    static uint8_t barrier_pixel;
     for (unsigned i = 0; i < 5; ++i)
-        ll_disp_put_area((uint8_t *)game_pixels, 0, 0, 0, 0);
+        ll_disp_put_area(&barrier_pixel, 0, 0, 0, 0);
 }
 
 static int check_game_buffer(void) {
@@ -118,6 +122,7 @@ void SkyOS_DoomProfileRender(unsigned setup_ms, unsigned bsp_ms,
 }
 
 void I_InitScreen_e32(void) {
+    exit_requested = 0;
     previous_key = 0;
     previous_code = 0;
     frames = 0;
@@ -173,13 +178,20 @@ static void post_key(evtype_t type, int code) {
 void I_ProcessKeyEvents(void) {
     const uint32_t raw = ll_vm_check_key();
     const uint16_t key = raw >> 16 ? (uint16_t)raw : 0;
-    if (key == KEY_F6 || key == KEY_ON) I_Quit_e32();
+    if (key == KEY_F6 || key == KEY_ON) {
+        // Return from the engine loop at a frame boundary. Jumping out of
+        // I_StartTic skips callers that may still be updating engine state.
+        exit_requested = 1;
+        return;
+    }
     if (key == previous_key) return;
     post_key(ev_keyup, previous_code);
     previous_key = key;
     previous_code = map_key(key);
     post_key(ev_keydown, previous_code);
 }
+
+int SkyOS_DoomExitRequested(void) { return exit_requested; }
 
 void I_FinishUpdate_e32(const byte *source, const byte *palette,
                         unsigned width, unsigned height) {
@@ -277,21 +289,51 @@ static void doom_task(void *unused) {
         InitGlobals();
         D_DoomMain();
     }
-    printf("DOOM_EXIT outcome=%d frames=%u allocated=%lu\n", outcome,
-           frames, (unsigned long)getHeapAllocateSize());
+    printf("DOOM_EXIT outcome=%d frames=%u allocated=%lu critical=%lu\n",
+           outcome, frames, (unsigned long)getHeapAllocateSize(),
+           (unsigned long)ulCriticalNesting);
     mainzone = NULL; // The SkyOS Doom zone is a fixed VM RAM region, not malloc storage.
     _g = NULL;
     display_barrier();
-done:
-    if (game_pixels) check_game_buffer();
-    if (lcd_pixels) free(lcd_pixels);
-    if (game_buffer_allocation) free(game_buffer_allocation);
-    game_buffer_allocation = NULL;
-    game_pixels = NULL;
-    printf("DOOM_CLEANUP resuming_ui\n");
+done:;
+    // Do not deliver the same F6 press to the resumed UI. A held F6
+    // switches the UI to Settings while Doom is still handing off.
+    unsigned release_wait = 0;
+    while ((ll_vm_check_key() >> 16) && release_wait++ < 50u)
+        vTaskDelay(pdMS_TO_TICKS(20));
+    printf("DOOM_CLEANUP key_released=%u critical=%lu resuming_ui\n",
+           (ll_vm_check_key() >> 16) == 0u,
+           (unsigned long)ulCriticalNesting);
     SystemUIResume();
-    printf("DOOM_CLEANUP ui_resumed\n");
+    printf("DOOM_CLEANUP ui_resumed critical=%lu\n",
+           (unsigned long)ulCriticalNesting);
+    // Early free (about one second after UI resume) froze the system in two
+    // hardware runs; one of them kept this task alive, so task deletion alone
+    // cannot explain it. One staged 12/24/36-second run stayed responsive.
+    // Keep that tested ordering until the UI redraw and allocator interaction
+    // is verified; the delay itself is not a proof of buffer lifetime.
+    for (unsigned seconds = 1; seconds <= 36u; ++seconds) {
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        if (seconds == 12u) {
+            if (lcd_pixels) free(lcd_pixels);
+            lcd_pixels = NULL;
+            printf("DOOM_CLEANUP lcd_freed allocated=%lu\n",
+                   (unsigned long)getHeapAllocateSize());
+        }
+        if (seconds == 24u) {
+            if (game_pixels) check_game_buffer();
+            if (game_buffer_allocation) free(game_buffer_allocation);
+            game_buffer_allocation = NULL;
+            game_pixels = NULL;
+            printf("DOOM_CLEANUP game_freed allocated=%lu\n",
+                   (unsigned long)getHeapAllocateSize());
+        }
+        printf("DOOM_CLEANUP_WAIT seconds=%u key=%08lx critical=%lu\n",
+               seconds, (unsigned long)ll_vm_check_key(),
+               (unsigned long)ulCriticalNesting);
+    }
     app_running = 0;
+    printf("DOOM_CLEANUP task_delete\n");
     vTaskDelete(NULL);
 }
 

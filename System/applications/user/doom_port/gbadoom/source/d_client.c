@@ -58,6 +58,9 @@
 
 #include "protocol.h"
 #include "i_network.h"
+#ifdef SKYOS
+#include "i_system_e32.h"
+#endif
 #include "i_system.h"
 #include "i_main.h"
 #include "i_video.h"
@@ -79,6 +82,10 @@ void D_BuildNewTiccmds(void)
     while (newtics--)
     {
         I_StartTic();
+#ifdef SKYOS
+        if (SkyOS_DoomExitRequested())
+            return;
+#endif
         if (_g->maketic - _g->gametic > 3)
             break;
 
@@ -97,6 +104,11 @@ void TryRunTics (void)
     {
 
         D_BuildNewTiccmds();
+
+#ifdef SKYOS
+        if (SkyOS_DoomExitRequested())
+            return;
+#endif
 
         runtics = (_g->maketic) - _g->gametic;
         if (runtics <= 0)

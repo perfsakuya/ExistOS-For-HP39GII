@@ -1,9 +1,13 @@
 # Doom Probe
 
+This historical diagnostic app is no longer linked into the current System
+image or shown in the application list. Its source and host smoke check remain
+for reproducing the original hardware gate.
+
 Native C hardware gate for a future GBADoom port. This small perspective
 renderer is **not the Doom engine** and does not use Pocket Vapor.
 
-Opening **Doom Probe** performs these checks on the HP 39gII:
+The historical **Doom Probe** build performed these checks on the HP 39gII:
 
 1. Borrow the persistent System UI framebuffer, allocate a 160 × 120 scene
    buffer, and attempt a 160 KiB game heap (falling back to 128 KiB).
