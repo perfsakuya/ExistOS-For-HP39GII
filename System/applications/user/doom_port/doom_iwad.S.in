@@ -1,0 +1,11 @@
+/* Generated from Freedoom Phase 1 v0.13.0, E1M1 only. See data/COPYING.txt. */
+    .section .rodata
+    .balign 4
+    .global doom_iwad
+doom_iwad:
+    .incbin "@DOOM_IWAD_PATH@"
+doom_iwad_end:
+    .balign 4
+    .global doom_iwad_len
+doom_iwad_len:
+    .word doom_iwad_end - doom_iwad

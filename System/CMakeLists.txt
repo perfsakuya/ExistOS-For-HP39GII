@@ -40,6 +40,19 @@ list(APPEND SYS_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_probe/DoomProbeRender.c
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_probe/DoomProbe.c
 )
+file(GLOB DOOM_ENGINE_SRCS CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_port/gbadoom/source/*.c)
+set(DOOM_IWAD_PATH
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_port/data/freedoom-e1m1-gba.wad)
+configure_file(applications/user/doom_port/doom_iwad.S.in
+    ${CMAKE_CURRENT_BINARY_DIR}/doom_iwad.S @ONLY)
+list(APPEND SYS_SRCS ${DOOM_ENGINE_SRCS}
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_port/DoomPort.c
+    ${CMAKE_CURRENT_BINARY_DIR}/doom_iwad.S)
+set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/doom_iwad.S
+    PROPERTIES OBJECT_DEPENDS ${DOOM_IWAD_PATH})
+include_directories(./applications/user/doom_port/gbadoom/include)
+add_compile_definitions(SKYOS)
 include_directories(./applications/user/pocket_vapor_demo/runtime)
 aux_source_directory(./kernel/scheduler/freertos/core                SYS_SRCS)
 aux_source_directory(./kernel/scheduler/freertos/port                SYS_SRCS)
@@ -128,6 +141,7 @@ add_custom_target(
   COMMAND ${CMAKE_OBJCOPY} -I elf32-little -O binary -R .note -R .comment -S ${CMAKE_CURRENT_BINARY_DIR}/sys.elf ${CMAKE_CURRENT_BINARY_DIR}/ExistOS.sys 
   COMMAND ${CMAKE_NM} -n ${CMAKE_CURRENT_BINARY_DIR}/sys.elf > ${CMAKE_CURRENT_BINARY_DIR}/sys_symtab.txt 
   COMMAND ${CMAKE_SOURCE_DIR}/tools/sysigner ${CMAKE_CURRENT_BINARY_DIR}/sys_symtab.txt ${CMAKE_CURRENT_BINARY_DIR}/ExistOS.sys 
+  COMMAND ${CMAKE_COMMAND} -DIMAGE=${CMAKE_CURRENT_BINARY_DIR}/ExistOS.sys -P ${CMAKE_SOURCE_DIR}/tools/doom/check_sys_size.cmake
   DEPENDS sys.elf 
   )
 
