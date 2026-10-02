@@ -20,6 +20,7 @@
 #include "UI_Language.h"
 #include "UI_build_stamp.h"
 #include "SystemConfig.h"
+#include "applications/AppRegistry.h"
 
 // 声明enableMemSwap函数
 extern "C" void enableMemSwap(bool enable);
@@ -38,10 +39,6 @@ extern "C" {
 #endif
 
 #define CONF_SUBPAGES (4)
-
-#include "../applications/user/khicas/khicas_ico.c"
-
-extern const unsigned char gImage_khicas_ico[48 * 48];
 
 // 移除静态变量，改为使用配置系统
 // static char power_save = ' ';
@@ -296,17 +293,19 @@ void drawPage(int page) {
 
     switch (page) {
     case 0:
-        uidisp->draw_bmp((char *)gImage_khicas_ico, mainw->content_x0 + 12, mainw->content_y0 + 12, 48, 48);
-
-        uidisp->draw_printf(mainw->content_x0 + 12,
-                            mainw->content_y0 + 12 + 48 + 1, 16, 0, 0xFF, "KhiCAS");
-
-        uidisp->draw_box((mainw->content_x0 + 12) + appPage_select * (48 + appPage_select * 32),
-                         mainw->content_y0 + 12,
-                         (mainw->content_x0 + 12) + 48 + appPage_select * (48 + appPage_select * 32),
-                         mainw->content_y0 + 12 + 48,
-                         0,
-                         -1);
+        // Three apps fit on one row; additional apps use another page.
+        for (size_t index = (appPage_select / 3) * 3;
+             index < AppRegistry_Count() && index < (appPage_select / 3 + 1) * 3;
+             ++index) {
+            const AppEntry *app = AppRegistry_Get(index);
+            const uint32_t x = mainw->content_x0 + 12 + (index % 3) * 80;
+            const uint32_t y = mainw->content_y0 + 12;
+            uidisp->draw_bmp((char *)app->icon, x, y, 48, 48);
+            uidisp->draw_printf(x, y + 49, 16, 0, 0xFF, "%s", app->name);
+            if (index == (size_t)appPage_select) {
+                uidisp->draw_box(x, y, x + 48, y + 48, 0, -1);
+            }
+        }
         break;
 
     case 1:
@@ -648,7 +647,7 @@ void keyMsg(uint32_t key, int state) {
                 goto CONSOLE_KEY_EVENT;
             }
             if (curPage == 0) {
-                if (appPage_select < 1) {
+                if ((size_t)(appPage_select + 1) < AppRegistry_Count()) {
                     appPage_select++;
                     drawPage(curPage);
                 }
@@ -693,10 +692,9 @@ void keyMsg(uint32_t key, int state) {
 
         case KEY_ENTER:
             if (curPage == 0) {
-                if (appPage_select == 0) {
-
-                    void StartKhiCAS();
-                    StartKhiCAS();
+                const AppEntry *app = AppRegistry_Get(appPage_select);
+                if (app && app->launch) {
+                    app->launch();
                 }
             } else if (curPage == 1) {
                 goto CONSOLE_KEY_EVENT;

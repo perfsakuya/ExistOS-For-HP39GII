@@ -51,7 +51,7 @@ SkyOS 的 50×25 衬线体开机位图及生成脚本已放入 `OSLoader/Include
 
 ## 可扩展的功能入口
 
-- 应用页目前只绘制 KhiCAS 图标并在选中第一个应用时启动它（`System/graphics/UICore.cpp:297-310,694-700`）。若要新增应用，可把图标、标题和启动函数整理为应用列表，再统一处理导航。
+- 应用页已改为 `System/applications/AppRegistry.cpp` 中的注册表，统一绘制图标和启动入口。当前注册 KhiCAS 与 SkyOS Notes；后续应用可以在此扩展。
 - 文件管理器进入普通文件的分支仍是占位注释（`System/graphics/UICore.cpp:723-733`）。可以先做文本/图片预览，再接入文件关联。
 - 如果希望全系统使用 SkyOS 品牌，需另外修改 System UI 位图、控制台与设置页文案；当前实机验证只覆盖 Loader 的开机画面。
 
@@ -61,4 +61,10 @@ SkyOS 的 50×25 衬线体开机位图及生成脚本已放入 `OSLoader/Include
 - 按需检出已展开 `Libs`、`fonts`、`tools`、`OSLoader`、`System` 和 `Script`。官方 GNU Arm Embedded Toolchain 10.3-2021.10 安装在 `F:\workspace\39gii-reverse\.toolchains\gcc-arm-none-eabi-10.3-2021.10`，其 `bin` 已加入用户 PATH。下载的官方 ZIP 为 200,578,763 字节，SHA-256 为 `D287439B3090843F3F4E29C7C41F81D958A5323AECEFCF705C203BFD8AE3F2E7`；解压后的文件合计 729,974,068 字节。
 - Windows 编译命令：`cmake -S . -B build -G Ninja`，然后 `cmake --build build --parallel 6`。2026-10-02 在本机成功生成 `build/OSLoader/OSLoader.sb`（93,264 字节，SHA-256 `8208C47FE7CDE6248EB44C592CE7F19011FD600528A5CF4B2DA2359FA872BCE4`）和 `build/System/ExistOS.sys`（5,274,964 字节，SHA-256 `E0133BE02B66159914488C3366F6D2463516B40963111EF72C67EA1411CF383C`）。两个 ELF 均为 ARM little-endian ELF32，Loader 的 `rom.bin` 中找到一份完整的 1,250 字节 SkyOS 开机位图。
 - 首次 System 链接暴露了字体脚本相对路径错误。已在 `Script/sys_ld.script` 中按文件名 `INCLUDE`，并在 `System/CMakeLists.txt` 为链接器指定仓库 `fonts` 目录；这样构建目录位置不影响查找。重新配置与编译均成功。
-- 先处理刷写错误与超时，再修复文件管理器边界问题；每个阶段先构建和测试，再进行实机刷写。本次仅编译，未向设备写入新固件。
+- 上述阶段仅编译，未向设备写入新固件。后续的 Notes 功能验证见下节；刷写工具仍缺少 NAND 读回校验，不能仅凭 `PGOK` 判定实机功能正常。
+
+## SkyOS Notes 开发记录（2026-10-02）
+
+- 在本地分支 `skyos/notes-app` 增加应用注册表与短便笺应用。应用支持键盘输入、光标移动、保存、退出后重新读取，使用内部 FAT 存储中的 `SKYNOTE.TXT` 与 `SKYNOTE.BAK`。超长或非 ASCII 文件只读显示，避免覆盖外部编辑的数据。
+- GNU Arm Embedded Toolchain 10.3-2021.10 构建通过。最新候选 `build/System/ExistOS.sys` 为 5,281,332 字节，SHA-256 为 `86923137FAC77F00D2B09F783D58A5D2D7E25BAE3DCBA27053F09607F25B4E0B`。OSLoader 没有改动。
+- 曾将上一候选系统镜像（5,281,292 字节，SHA-256 `9CB072C4DA7D4550110A64C6376A162F1D6DBF2F15DB946ADE355B8766C1D6D2`）通过 EDB 写入系统起始页 1984；工具返回 0，设备重新枚举为 ExistOS USB 复合设备。屏幕启动和 Notes 保存读取仍待实机确认，最新候选尚未刷入。
