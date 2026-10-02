@@ -227,7 +227,7 @@ def main() -> None:
     args = parser.parse_args()
     result = audit(args.source.read_bytes())
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    args.output.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8", newline="\n")
     print(f"{result['map_count']} maps audited; {result['source_bytes']} source bytes")
     for m in result["maps"][:9]:
         c = m["record_counts"]
