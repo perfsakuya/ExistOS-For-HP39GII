@@ -1,4 +1,4 @@
-/* SkyOS E1M1 gameplay shell: 35 Hz rules and the compact Lite renderer. */
+/* SkyOS two-map gameplay shell: 35 Hz rules and the compact renderer. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -37,7 +37,9 @@ typedef struct {
     uint32_t lcd_total_us, lcd_max_us;
     uint32_t interval_total_us, interval_max_us;
     uint32_t last_render_us;
-    unsigned frames, logic_ticks, interval_samples, dropped_ticks;
+    DoomLiteRenderStats render_counts;
+    uint32_t max_cells, max_line_tests;
+    unsigned frames, logic_ticks, interval_samples, dropped_ticks, total_frames;
 } GamePerf;
 
 static void record_time(uint32_t elapsed, uint32_t *total, uint32_t *max) {
@@ -51,7 +53,7 @@ static unsigned long rounded_ms(uint32_t elapsed_us) {
     return (unsigned long)((elapsed_us + 500u) / 1000u);
 }
 
-static void log_perf(GamePerf *perf, const DoomLiteGame *game,
+static void log_perf(GamePerf *perf, DoomLiteGame *game,
                      int map_mode, unsigned map_zoom, uint32_t now_ms) {
     printf("DOOMG_PERF frames=%u elapsed_ms=%lu logic_ticks=%u "
            "logic_total_ms=%lu logic_max_ms=%lu logic_total_us=%lu logic_max_us=%lu "
@@ -61,7 +63,8 @@ static void log_perf(GamePerf *perf, const DoomLiteGame *game,
            "dropped_ticks=%u hp=%u ammo=%u kills=%u blue=%u map=%d "
            "x=%ld y=%ld zoom=%u scene_total_us=%lu scene_max_us=%lu "
            "sprite_total_us=%lu sprite_max_us=%lu hud_total_us=%lu hud_max_us=%lu "
-           "weapon_total_us=%lu weapon_max_us=%lu pistol_tics=%u\n",
+           "weapon_total_us=%lu weapon_max_us=%lu pistol_tics=%u "
+           "level=%u armor=%u red=%u yellow=%u contrast=%u actors=%u movers=%u frame_count=%u\n",
            perf->frames, (unsigned long)(now_ms - perf->wall_start_ms),
            perf->logic_ticks,
            rounded_ms(perf->logic_total_us), rounded_ms(perf->logic_max_us),
@@ -84,17 +87,68 @@ static void log_perf(GamePerf *perf, const DoomLiteGame *game,
            (unsigned long)perf->sprite_total_us, (unsigned long)perf->sprite_max_us,
            (unsigned long)perf->hud_total_us, (unsigned long)perf->hud_max_us,
            (unsigned long)perf->weapon_total_us, (unsigned long)perf->weapon_max_us,
-           (unsigned)game->pistol_tics);
+           (unsigned)game->pistol_tics, (unsigned)game->map_index + 1u,
+           (unsigned)game->armor, (unsigned)game->red_key,
+           (unsigned)game->yellow_key, (unsigned)game->contrast + 1u,
+           (unsigned)game->actor_count, (unsigned)game->metrics.active_movers,
+           perf->total_frames);
+    DoomLiteGameProfile profile;
+    DoomLiteGame_TakeProfile(game, &profile);
+    static const char *const names[DL_PROFILE_COUNT] = {
+        "ai", "anim", "mover", "collision", "los"
+    };
+    printf("DOOMG_DETAIL frames=%u tics=%u level=%u", perf->frames,
+           perf->logic_ticks, (unsigned)game->map_index + 1u);
+    for (unsigned i = 0; i < DL_PROFILE_COUNT; ++i)
+        printf(" %s_total_us=%lu %s_max_us=%lu %s_calls=%lu", names[i],
+               (unsigned long)profile.total_us[i], names[i],
+               (unsigned long)profile.max_us[i], names[i],
+               (unsigned long)profile.calls[i]);
+    const DoomLiteGameMetrics *m = &game->metrics;
+    printf(" ai_visits=%lu los_queries=%lu los_tests=%lu collision_queries=%lu "
+           "collision_tests=%lu transitions=%lu mover_steps=%lu pickup_tests=%lu "
+           "actor_moves=%lu shots=%lu teleports=%lu overflows=%lu "
+           "actor_peak=%u mover_peak=%u awake=%u",
+           (unsigned long)m->ai_visits, (unsigned long)m->los_queries,
+           (unsigned long)m->los_line_tests, (unsigned long)m->collision_queries,
+           (unsigned long)m->collision_line_tests,
+           (unsigned long)m->state_transitions, (unsigned long)m->mover_steps,
+           (unsigned long)m->pickup_tests, (unsigned long)m->actor_moves,
+           (unsigned long)m->shots, (unsigned long)m->teleports,
+           (unsigned long)m->pool_overflows, (unsigned)m->actor_high_water,
+           (unsigned)m->mover_high_water, (unsigned)m->awake_actors);
+    printf(" rays=%lu cells=%lu line_tests=%lu boundaries=%lu surfaces=%lu "
+           "sprite_candidates=%lu sprite_pixels=%lu surface_limits=%lu "
+           "max_cells=%lu max_line_tests=%lu surface_limit_pixels=%lu\n",
+           (unsigned long)perf->render_counts.rays,
+           (unsigned long)perf->render_counts.cells,
+           (unsigned long)perf->render_counts.line_tests,
+           (unsigned long)perf->render_counts.boundaries,
+           (unsigned long)perf->render_counts.surfaces,
+           (unsigned long)perf->render_counts.sprite_candidates,
+           (unsigned long)perf->render_counts.sprite_pixels,
+           (unsigned long)perf->render_counts.surface_limit_hits,
+           (unsigned long)perf->max_cells, (unsigned long)perf->max_line_tests,
+           (unsigned long)perf->render_counts.surface_limit_pixels);
     const uint32_t last_render_us = perf->last_render_us;
+    const unsigned total_frames = perf->total_frames;
     memset(perf, 0, sizeof(*perf));
     perf->wall_start_ms = now_ms;
     perf->last_render_us = last_render_us;
+    perf->total_frames = total_frames;
 }
 
 static const char *message_for_event(uint32_t flags) {
     if (flags & DL_EVENT_EXIT) return "EXIT";
     if (flags & DL_EVENT_BLUE_KEY) return "BLUE KEY";
+    if (flags & DL_EVENT_RED_KEY) return "RED KEY";
+    if (flags & DL_EVENT_YELLOW_KEY) return "YELLOW KEY";
     if (flags & DL_EVENT_NEED_BLUE) return "NEED BLUE";
+    if (flags & DL_EVENT_NEED_RED) return "NEED RED";
+    if (flags & DL_EVENT_NEED_YELLOW) return "NEED YELLOW";
+    if (flags & DL_EVENT_LIMIT) return "POOL LIMIT";
+    if (flags & DL_EVENT_TELEPORT) return "TELEPORT";
+    if (flags & DL_EVENT_SECRET) return "SECRET";
     if (flags & DL_EVENT_DOOR_OPEN) return "DOOR OPEN";
     if (flags & DL_EVENT_DOOR_CLOSE) return "DOOR CLOSE";
     if (flags & DL_EVENT_KILL) return "KILL";
@@ -141,9 +195,15 @@ static void doom_game_task(void *unused) {
     }
     printf("DOOMG_BOOT phase=framebuffer ms=%lu pixels=%u\n",
            (unsigned long)ll_get_time_ms(), (unsigned)GAME_PIXELS);
+    DoomLiteGame_SetClock(ll_get_time_us);
+    const uint32_t init_start_us = ll_get_time_us();
     DoomLiteGame_Init(&game_state);
-    printf("DOOMG_BOOT phase=game_init ms=%lu x=%ld y=%ld hp=%u ammo=%u enemies=%u\n",
+    printf("DOOMG_BOOT phase=game_init ms=%lu duration_us=%lu level=1 state_bytes=%u render_bytes=%u "
+           "x=%ld y=%ld hp=%u ammo=%u enemies=%u\n",
            (unsigned long)ll_get_time_ms(),
+           (unsigned long)(ll_get_time_us() - init_start_us),
+           (unsigned)sizeof(game_state),
+           DoomLite_RenderWorkingSetBytes(),
            (long)(game_state.x_q8 >> 8), (long)(game_state.y_q8 >> 8),
            (unsigned)game_state.health, (unsigned)game_state.ammo,
            (unsigned)game_state.total_enemies);
@@ -177,6 +237,46 @@ static void doom_game_task(void *unused) {
         const uint32_t raw_key = ll_vm_check_key();
         const uint16_t key = raw_key >> 16 ? (uint16_t)raw_key : GAME_NO_KEY;
         if (key == KEY_F6 || key == KEY_ON) break;
+        if (key == KEY_F2 && previous_key != KEY_F2 &&
+            (game_state.completed || !game_state.health)) {
+            if (perf.frames || perf.logic_ticks)
+                log_perf(&perf, &game_state, map_mode, map_zoom, ll_get_time_ms());
+            const uint32_t load_start_us = ll_get_time_us();
+            const unsigned contrast = game_state.contrast;
+            const unsigned level = game_state.map_index;
+            if (game_state.completed && level + 1u < DOOM_MAP_COUNT)
+                DoomLiteGame_NextMap(&game_state);
+            else
+                DoomLiteGame_InitMap(&game_state, level);
+            game_state.contrast = (uint8_t)contrast;
+            game_state.previous_buttons = DL_GAME_USE; /* Wait for this F2 release. */
+            printf("DOOMG_BOOT phase=map_load level=%u duration_us=%lu "
+                   "state_bytes=%u actors=%u hp=%u ammo=%u armor=%u\n",
+                   (unsigned)game_state.map_index + 1u,
+                   (unsigned long)(ll_get_time_us() - load_start_us),
+                   (unsigned)sizeof(game_state), (unsigned)game_state.actor_count,
+                   (unsigned)game_state.health, (unsigned)game_state.ammo,
+                   (unsigned)game_state.armor);
+            accumulator = 0u;
+            previous_us = ll_get_time_us();
+            perf.wall_start_ms = ll_get_time_ms();
+            perf.last_render_us = 0u;
+            pending_actions = 0u;
+            previous_key = key;
+            map_mode = 0;
+            message = NULL;
+            continue;
+        }
+        if (key == KEY_F3 && previous_key != KEY_F3) {
+            game_state.contrast = (game_state.contrast + 1u) % 3u;
+            printf("DOOMG_EVENT tick=%lu level=%u contrast=%u flags=0x0000\n",
+                   (unsigned long)game_state.ticks,
+                   (unsigned)game_state.map_index + 1u,
+                   (unsigned)game_state.contrast + 1u);
+            static const char *const labels[] = {"BRIGHT", "BALANCED", "HIGH CONTRAST"};
+            message = labels[game_state.contrast];
+            message_until_tick = game_state.ticks + 70u;
+        }
         if (key == KEY_F5 && previous_key != KEY_F5) {
             map_mode = !map_mode;
             printf("DOOMG_EVENT tick=%lu flags=0x0000 map=%d hp=%u ammo=%u kills=%u blue=%u completed=%u\n",
@@ -215,12 +315,15 @@ static void doom_game_task(void *unused) {
             ++run;
             accumulator -= GAME_TIC_THRESHOLD;
             if (events) {
-                printf("DOOMG_EVENT tick=%lu flags=0x%04lx hp=%u ammo=%u kills=%u blue=%u completed=%u pistol_tics=%u\n",
+                printf("DOOMG_EVENT tick=%lu flags=0x%08lx hp=%u ammo=%u kills=%u blue=%u completed=%u pistol_tics=%u "
+                       "level=%u armor=%u red=%u yellow=%u\n",
                        (unsigned long)game_state.ticks, (unsigned long)events,
                        (unsigned)game_state.health, (unsigned)game_state.ammo,
                        (unsigned)game_state.kills,
                        (unsigned)game_state.blue_key,
-                       (unsigned)game_state.completed, (unsigned)game_state.pistol_tics);
+                       (unsigned)game_state.completed, (unsigned)game_state.pistol_tics,
+                       (unsigned)game_state.map_index + 1u, (unsigned)game_state.armor,
+                       (unsigned)game_state.red_key, (unsigned)game_state.yellow_key);
                 message = message_for_event(events);
                 message_until_tick = game_state.ticks + 70u;
             }
@@ -242,9 +345,7 @@ static void doom_game_task(void *unused) {
             if (map_mode)
                 DoomLite_RenderGameMap(pixels, &game_state, map_zoom);
             else {
-                DoomLite_RenderGameFrame(pixels, game_state.x_q8, game_state.y_q8,
-                                         game_state.facing, 0,
-                                         game_state.door_open);
+                DoomLite_RenderGameScene(pixels, &game_state);
             }
             const uint32_t scene_us = ll_get_time_us() - render_start_us;
             record_time(scene_us, &perf.scene_total_us, &perf.scene_max_us);
@@ -258,6 +359,19 @@ static void doom_game_task(void *unused) {
                 record_time(ll_get_time_us() - weapon_start_us,
                             &perf.weapon_total_us, &perf.weapon_max_us);
             }
+            const DoomLiteRenderStats *stats = DoomLite_GetRenderStats();
+            perf.render_counts.rays += stats->rays;
+            perf.render_counts.cells += stats->cells;
+            perf.render_counts.line_tests += stats->line_tests;
+            perf.render_counts.boundaries += stats->boundaries;
+            perf.render_counts.surfaces += stats->surfaces;
+            perf.render_counts.sprite_candidates += stats->sprite_candidates;
+            perf.render_counts.sprite_pixels += stats->sprite_pixels;
+            perf.render_counts.surface_limit_hits += stats->surface_limit_hits;
+            perf.render_counts.surface_limit_pixels += stats->surface_limit_pixels;
+            if (stats->cells > perf.max_cells) perf.max_cells = stats->cells;
+            if (stats->line_tests > perf.max_line_tests)
+                perf.max_line_tests = stats->line_tests;
             if (message && (int32_t)(game_state.ticks - message_until_tick) >= 0)
                 message = NULL;
             const uint32_t hud_start_us = ll_get_time_us();
@@ -272,6 +386,7 @@ static void doom_game_task(void *unused) {
             const uint32_t lcd_us = ll_get_time_us() - lcd_start_us;
             record_time(lcd_us, &perf.lcd_total_us, &perf.lcd_max_us);
             ++total_frames;
+            ++perf.total_frames;
             if (++perf.frames == GAME_PERF_FRAMES)
                 log_perf(&perf, &game_state, map_mode, map_zoom, ll_get_time_ms());
         }

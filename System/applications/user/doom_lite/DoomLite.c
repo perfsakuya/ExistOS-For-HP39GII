@@ -16,7 +16,6 @@
 #include "E1M1Grid.h"
 #include "E1M1Portals.h"
 #include "DoomLiteRender.h"
-#include "E1M1Sprites.h"
 #include "DoomLiteHud.h"
 
 #define LITE_W LCD_PIX_W
@@ -44,9 +43,13 @@ volatile int SkyOS_DoomLiteRunning;
 static uint8_t barrier_pixel;
 #endif
 
-/* Only the game scene fills this depth cache; it uses one corrected wall
- * distance per two LCD columns. The game overlay consumes it immediately. */
+/* Reference-test depth only: production sprites use per-ray wall spans. */
+#ifdef DOOM_LITE_RAY_TEST
 static uint16_t game_wall_depth[LITE_RAYS];
+#define GAME_SET_DEPTH(ray, value) (game_wall_depth[(ray)] = (uint16_t)(value))
+#else
+#define GAME_SET_DEPTH(ray, value) ((void)0)
+#endif
 static uint8_t game_wall_ready;
 
 static int sine_q14(uint8_t angle) {
@@ -67,6 +70,9 @@ static int sine_q14_fine(uint16_t angle) {
     return low + ((high - low) * fraction) / 4;
 }
 
+#if defined(DOOM_LITE_RAY_TEST) && defined(__GNUC__)
+__attribute__((unused))
+#endif
 static int wall_at_q8(int32_t x, int32_t y) {
     const int gx = (x >> 13) - E1M1_GX0;
     const int gy = (y >> 13) - E1M1_GY0;
@@ -317,8 +323,7 @@ static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
             ? cast_game_ray(x, y, angle, door_open) : cast_ray(x, y, angle);
         int distance = ((int)(hit.distance_q8 >> 8) *
                         sine_q14_fine((uint16_t)(offset + 256))) >> 14;
-        if (game_mode) game_wall_depth[ray] =
-            (uint16_t)(distance > 0 ? distance : 0);
+        if (game_mode) GAME_SET_DEPTH(ray, distance > 0 ? distance : 0);
         if (distance < 24) distance = 24;
         int height = 8192 / distance;
         if (height > scene_h) height = scene_h;
@@ -425,122 +430,6 @@ static void draw_map(uint8_t *pixels, int32_t x, int32_t y) {
     }
 }
 
-typedef struct { int ox, oy; unsigned scale; } GameMapView;
-
-static int game_map_cell(int32_t world) {
-    const int cell = world >= 0 ? world / E1M1_CELL
-        : -((-world + E1M1_CELL - 1) / E1M1_CELL);
-    return cell;
-}
-
-static int game_map_x(const GameMapView *view, int32_t world_x) {
-    return (game_map_cell(world_x) - E1M1_GX0) * (int)view->scale + view->ox;
-}
-
-static int game_map_y(const GameMapView *view, int32_t world_y) {
-    return (game_map_cell(world_y) - E1M1_GY0) * (int)view->scale + view->oy;
-}
-
-static void game_map_pixel(uint8_t *pixels, int x, int y, uint8_t color) {
-    if (x >= 0 && x < LITE_W && y >= 16 && y < LITE_H)
-        pixels[y * LITE_W + x] = color;
-}
-
-void DoomLite_RenderGameMap(uint8_t *pixels, const DoomLiteGame *game,
-                            unsigned zoom) {
-    if (!pixels || !game) return;
-    game_wall_ready = 0;
-    GameMapView view = {(LITE_W - E1M1_WIDTH) / 2, 16, 1u};
-    if (zoom >= 2u) {
-        view.scale = 2u;
-        view.oy = (16 + LITE_H) / 2 - ((game->y_q8 >> 13) - E1M1_GY0) * 2;
-        /* The 2x map is 252 pixels wide, so keep its entire width visible.
-         * Clamp vertical following at the bounds instead of wasting space
-         * outside the level when the player approaches an edge. */
-        view.ox = (LITE_W - E1M1_WIDTH * 2) / 2;
-        if (view.oy > 16) view.oy = 16;
-        if (view.oy < LITE_H - E1M1_HEIGHT * 2)
-            view.oy = LITE_H - E1M1_HEIGHT * 2;
-    }
-    memset(pixels, 245, LITE_W * LITE_H);
-    for (int y = 16; y < LITE_H; ++y) {
-        if (y < view.oy) continue;
-        const int gy = (y - view.oy) / (int)view.scale;
-        if ((unsigned)gy >= E1M1_HEIGHT) continue;
-        for (int x = 0; x < LITE_W; ++x) {
-            if (x < view.ox) continue;
-            const int gx = (x - view.ox) / (int)view.scale;
-            if ((unsigned)gx < E1M1_WIDTH)
-                pixels[y * LITE_W + x] = e1m1_grid[gy * E1M1_WIDTH + gx]
-                    ? 44u : 210u;
-        }
-    }
-
-    /* Closed doors fill their actual WAD rectangle. Open doors are light,
-     * with dark endcaps so the passage still has a visible location. */
-    for (unsigned i = 0; i < E1M1_DOOR_COUNT; ++i) {
-        const E1M1Door *door = &e1m1_doors[i];
-        const int x0 = game_map_x(&view, door->x0);
-        const int x1 = game_map_x(&view, door->x1) + (int)view.scale - 1;
-        const int y0 = game_map_y(&view, door->y0);
-        const int y1 = game_map_y(&view, door->y1) + (int)view.scale - 1;
-        const int along_x = x1 - x0 >= y1 - y0;
-        for (int y = y0; y <= y1; ++y)
-            for (int x = x0; x <= x1; ++x)
-                game_map_pixel(pixels, x, y, game->door_open[i]
-                    ? ((along_x ? x == x0 || x == x1 : y == y0 || y == y1)
-                        ? 92u : 250u)
-                    : 0u);
-    }
-
-    /* Use the converted WAD's original exit switch, not a guessed point. */
-    for (unsigned i = 0; i < E1M1_SPECIAL_LINE_COUNT; ++i) {
-        const E1M1SpecialLine *line = &e1m1_special_lines[i];
-        if (line->special != 11u) continue;
-        const int x = game_map_x(&view, ((int32_t)line->x1 + line->x2) / 2);
-        const int y = game_map_y(&view, ((int32_t)line->y1 + line->y2) / 2);
-        for (int dy = -6; dy <= 6; ++dy)
-            for (int dx = -6; dx <= 6; ++dx)
-                game_map_pixel(pixels, x + dx, y + dy, 250u);
-        for (int arm = -5; arm <= 5; ++arm) {
-            game_map_pixel(pixels, x + arm, y + arm, 0u);
-            game_map_pixel(pixels, x + arm + 1, y + arm, 0u);
-            game_map_pixel(pixels, x + arm, y - arm, 0u);
-            game_map_pixel(pixels, x + arm + 1, y - arm, 0u);
-        }
-    }
-
-    /* The blue key is a hollow diamond until picked up. */
-    for (unsigned i = 0; i < E1M1_THING_COUNT; ++i) {
-        const E1M1Thing *thing = &e1m1_things[i];
-        if (thing->type != 5u || !DoomLiteGame_ThingActive(game, i))
-            continue;
-        const int x = game_map_x(&view, thing->x), y = game_map_y(&view, thing->y);
-        for (int dy = -6; dy <= 6; ++dy)
-            for (int dx = -6; dx <= 6; ++dx) {
-                const int distance = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
-                if (distance <= 6)
-                    game_map_pixel(pixels, x + dx, y + dy,
-                                   distance >= 4 ? 0u : 250u);
-            }
-    }
-
-    const int px = game_map_x(&view, game->x_q8 >> 8);
-    const int py = game_map_y(&view, game->y_q8 >> 8);
-    for (int dy = -3; dy <= 3; ++dy)
-        for (int dx = -3; dx <= 3; ++dx)
-            game_map_pixel(pixels, px + dx, py + dy, 250u);
-    const int heading_x = sine_q14((uint8_t)(game->facing + 64u));
-    const int heading_y = sine_q14(game->facing);
-    for (int distance = 2; distance <= 7; ++distance)
-        game_map_pixel(pixels,
-                       px + heading_x * distance / 16384,
-                       py + heading_y * distance / 16384, 0u);
-    for (int dy = -1; dy <= 1; ++dy)
-        for (int dx = -1; dx <= 1; ++dx)
-            game_map_pixel(pixels, px + dx, py + dy, 0u);
-}
-
 void DoomLite_RenderFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
                           uint8_t facing, int map_mode) {
     game_wall_ready = 0;
@@ -559,95 +448,7 @@ void DoomLite_RenderGameFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
     }
 }
 
-typedef struct {
-    uint16_t thing_index;
-    uint16_t depth;
-    int16_t center;
-    uint8_t width, height, texture;
-} GameSprite;
-
-static int sprite_for_type(uint16_t type) {
-    for (unsigned i = 0; i < E1M1_SPRITE_COUNT; ++i)
-        if (e1m1_sprites[i].thing_type == type) return (int)i;
-    return -1;
-}
-
-void DoomLite_RenderGameThings(uint8_t *pixels, const DoomLiteGame *game) {
-    if (!game_wall_ready || !pixels || !game) return;
-    GameSprite sprites[LITE_SPRITE_LIMIT];
-    unsigned count = 0;
-    const int32_t px = game->x_q8 / 256, py = game->y_q8 / 256;
-    const int32_t forward_x = sine_q14((uint8_t)(game->facing + 64u));
-    const int32_t forward_y = sine_q14(game->facing);
-    for (unsigned i = 0; i < E1M1_THING_COUNT; ++i) {
-        const E1M1Thing *thing = &e1m1_things[i];
-        const int texture = sprite_for_type(thing->type);
-        if (texture < 0 ||
-            !DoomLiteGame_ThingActive(game, i)) continue;
-        const int32_t dx = (int32_t)thing->x - px;
-        const int32_t dy = (int32_t)thing->y - py;
-        if (dx * dx + dy * dy > 512 * 512) continue;
-        const int32_t depth = (dx * forward_x + dy * forward_y) >> 14;
-        if (depth < 12 || depth > 512) continue;
-        const int32_t side = (-dx * forward_y + dy * forward_x) >> 14;
-        const int32_t center = LITE_W / 2 +
-                               side * LITE_PROJECTION / depth;
-        const int key = thing->type == 5u;
-        int height = (key ? 18 : 40) * LITE_PROJECTION / depth;
-        if (height < 4) height = 4;
-        if (height > (key ? 48 : 100)) height = key ? 48 : 100;
-        const E1M1Sprite *asset = &e1m1_sprites[texture];
-        int width = height * asset->width / asset->height;
-        if (width < 3) width = 3;
-        if (width > (key ? 40 : 60)) width = key ? 40 : 60;
-        if (center + width / 2 < 0 || center - width / 2 >= LITE_W)
-            continue;
-        if (count == LITE_SPRITE_LIMIT) continue;
-        /* Furthest first, so nearer sprites naturally cover the far
-         * ones without a per-pixel Z buffer. */
-        unsigned at = count++;
-        while (at && sprites[at - 1u].depth < depth) {
-            sprites[at] = sprites[at - 1u];
-            --at;
-        }
-        sprites[at] = (GameSprite){ (uint16_t)i, (uint16_t)depth,
-                                     (int16_t)center, (uint8_t)width,
-                                     (uint8_t)height, (uint8_t)texture };
-    }
-
-    for (unsigned i = 0; i < count; ++i) {
-        const GameSprite *sprite = &sprites[i];
-        const int left = sprite->center - sprite->width / 2;
-        const int top = ((int)DOOM_GAME_VIEW_H - sprite->height) / 2;
-        const int right = left + sprite->width;
-        const int bottom = top + sprite->height;
-        const E1M1Sprite *asset = &e1m1_sprites[sprite->texture];
-        uint8_t source_x[60], visible[60];
-        const int first_x = left < 0 ? 0 : left;
-        const int last_x = right < LITE_W ? right : LITE_W;
-        for (int x = first_x; x < last_x; ++x) {
-            const unsigned ray = (unsigned)x / LITE_RAY_PIXELS;
-            const int local_x = x - left;
-            visible[local_x] = sprite->depth + 3u < game_wall_depth[ray];
-            source_x[local_x] = (uint8_t)(local_x * asset->width / sprite->width);
-        }
-        /* Precompute X samples, then write in row order. No heap decoding
-         * or per-pixel division is needed for these flash-backed sprites. */
-        const unsigned step_y = ((unsigned)asset->height << 16) / sprite->height;
-        unsigned source_y = 0u;
-        for (int y = top; y < bottom; ++y, source_y += step_y) {
-            const unsigned source_row = (source_y >> 16) * asset->width;
-            for (int x = first_x; x < last_x; ++x) {
-                const int local_x = x - left;
-                if (!visible[local_x]) continue;
-                const unsigned index = source_row + source_x[local_x];
-                const unsigned code = (asset->pixels[index >> 1] >>
-                                       ((index & 1u) * 4u)) & 15u;
-                if (code) pixels[y * LITE_W + x] = e1m1_sprite_gray[code];
-            }
-        }
-    }
-}
+#include "DoomLiteScene.inc"
 
 #ifndef DOOM_LITE_RAY_TEST
 static void move_player(int32_t *x, int32_t *y, uint8_t facing, int forward) {

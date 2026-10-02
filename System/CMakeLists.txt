@@ -35,6 +35,7 @@ aux_source_directory(./applications/user/notes                       SYS_SRCS)
 list(APPEND SYS_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_lite/DoomLite.c
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_lite/DoomLiteGame.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_lite/DoomMap.c
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_lite/DoomGameApp.c
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_lite/DoomLiteHud.c
 )

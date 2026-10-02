@@ -213,6 +213,49 @@ class DashboardStateTest(unittest.TestCase):
         s = self.read(after + "DOOMG_BOOT phase=task_start ms=4000\n")
         self.assertIsNone(s["memory_kb"])
 
+    def test_two_levels_details_and_packet_boundaries(self):
+        boot = ("DOOMG_BOOT phase=task_start ms=1000\n"
+                "DOOMG_BOOT phase=game_init state_bytes=7220 render_bytes=9381\n")
+        perf = (
+            "DOOMG_PERF frames=32 elapsed_ms=1600 logic_ticks=56 "
+            "logic_total_ms=112 logic_max_ms=4 render_total_ms=800 render_max_ms=30 "
+            "lcd_total_ms=384 lcd_max_ms=16 interval_samples=31 interval_total_ms=1550 "
+            "interval_max_ms=60 dropped_ticks=0 hp=150 ammo=90 kills=2 blue=1 "
+            "red=1 yellow=0 armor=100 contrast=3 level=2 actors=93 movers=1 frame_count=96\n"
+        )
+        detail = (
+            "DOOMG_DETAIL frames=32 tics=56 level=2 ai_total_us=56000 ai_max_us=2300 "
+            "anim_total_us=11200 anim_max_us=260 mover_total_us=2800 mover_max_us=200 "
+            "collision_total_us=5600 collision_max_us=300 los_total_us=8400 los_max_us=700 "
+            "cells=128000 line_tests=96000 actor_peak=93 mover_peak=1 overflows=0\n"
+        )
+        s = self.read(boot + perf + detail)
+        self.assertEqual(s["stage"], "E1M2 Game 运行中")
+        self.assertEqual(s["game"]["level"], 2)
+        self.assertEqual(s["starts"], 1)
+        self.assertEqual(s["game_resources"], {"state_kb": 7.05, "render_kb": 9.16})
+        self.assertEqual(s["latest_frame"], 96)
+        self.assertEqual(s["game"]["armor"], 100)
+        self.assertTrue(s["game"]["red_key"])
+        self.assertFalse(s["game"]["yellow_key"])
+        self.assertEqual(s["game"]["contrast"], 3)
+        self.assertEqual(s["game_detail"]["ai_ms"], 1)
+        self.assertEqual(s["game_detail"]["ai_max_ms"], 2.3)
+        self.assertEqual(s["game_detail"]["los_ms"], 0.15)
+        self.assertEqual(s["game_detail"]["raw"]["actor_peak"], 93)
+        s = self.read(boot + perf + detail + perf)
+        self.assertIsNone(s["game_detail"])  # Do not reuse a prior batch's timing.
+        s = self.read(boot + perf + detail + "DOOMG_BOOT phase=map_load level=1 duration_us=150\n")
+        self.assertEqual(s["stage"], "E1M1 Game 启动中")
+        self.assertIsNone(s["game"])
+        self.assertIsNone(s["game_detail"])
+        s = self.read(boot + perf + detail + boot)
+        self.assertIsNone(s["game_detail"])
+        self.assertEqual(s["starts"], 2)
+        s = self.read(boot + perf + detail + "DOOMG_EXIT phase=key frames=96\n"
+                      "DOOMG_EXIT phase=ui_resume_done\nDOOMG_EXIT phase=task_delete\n")
+        self.assertEqual(s["exits"], 1)
+
 
 if __name__ == "__main__":
     unittest.main()

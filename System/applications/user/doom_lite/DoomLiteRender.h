@@ -16,7 +16,7 @@ extern "C" {
 void DoomLite_RenderFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
                           uint8_t facing, int map_mode);
 
-/* Gameplay renderer: a zero door_open[] entry blocks rays at that door's
+/* Legacy E1M1 preview renderer: a zero door_open[] entry blocks rays at that door's
  * exact WAD boundary; any nonzero entry lets rays pass through. This leaves
  * the original DoomLite_RenderFrame() geometry and appearance unchanged.
  * The 3D Game entry renders the top 101 rows; DrawGameHud owns the bottom 26. */
@@ -29,10 +29,26 @@ void DoomLite_RenderGameFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
 void DoomLite_RenderGameMap(uint8_t *pixels, const DoomLiteGame *game,
                             unsigned zoom);
 
-/* Draw packed Freedoom enemies and the blue key, clipped against walls, over the most
- * recently rendered game scene. Call immediately after RenderGameFrame with
- * map_mode=0 and before drawing the HUD; inactive things are omitted. */
+/* Draw packed Freedoom actor animations, grounded corpses, three keys and
+ * common pickups against the native scene's wall span cache. Call immediately
+ * after RenderGameScene and before the weapon/HUD; collected things are omitted. */
 void DoomLite_RenderGameThings(uint8_t *pixels, const DoomLiteGame *game);
+
+/* Native Game renderer; selects E1M1/E1M2 from game->map, uses exact cell
+ * line references and current sector heights. Owns only the top view rows. */
+void DoomLite_RenderGameScene(uint8_t *pixels, const DoomLiteGame *game);
+
+typedef struct {
+    uint32_t rays, cells, line_tests, boundaries, surfaces;
+    uint32_t sprite_candidates, sprite_pixels;
+    uint32_t surface_limit_hits;
+    uint32_t surface_limit_pixels; /* Remaining ray rows filled by bounded fallback. */
+} DoomLiteRenderStats;
+
+/* Counters reset by RenderGameScene/Map; Things extends the same frame. */
+const DoomLiteRenderStats *DoomLite_GetRenderStats(void);
+/* Static writable caches only; excludes the borrowed LCD framebuffer. */
+unsigned DoomLite_RenderWorkingSetBytes(void);
 
 #ifdef __cplusplus
 }

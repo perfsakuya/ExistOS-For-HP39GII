@@ -1,4 +1,24 @@
-# Rebuilding the embedded E1M1 asset
+# Native Game checks and Doom asset tools
+
+## Current two-map Game
+
+`Game` uses standard Freedoom 0.13.0 E1M1/E1M2, without embedding a complete
+IWAD or linking the legacy GBADoom engine. `build_game_maps.py` emits
+immutable geometry/BSP/sparse collision/tag/neighbor tables;
+`build_game_sprites.py` emits 69 packed grayscale patches for actor animation
+and pickups. Both verify the pinned IWAD hash and support `--check`.
+They default to `../Freedoom-research/extracted/freedoom-0.13.0/freedoom1.wad`.
+The normal ARM build uses the generated headers and does not need the IWAD.
+
+```powershell
+python tools/doom/run_game_checks.py --cc D:/w64devkit/bin/gcc.exe
+```
+
+The runner records each compile/check/benchmark command, result and duration
+under `build/game-validation/`. It never opens or flashes a calculator.
+See [the two-map candidate report](../../docs/doom-game-e1m1-e1m2.md) for
+controls, approximate rules, profiling, memory and hardware test gaps.
+Keep `doom_port/data/COPYING.txt` and `CREDITS.txt` with redistributed assets.
 
 ## Community ports and expansion audit
 
@@ -32,18 +52,19 @@ The checked-in converted WAD is 7,025,444 bytes, SHA-256
 Retain Freedoom's `COPYING.txt` and `CREDITS.txt` with any redistributed
 output. The intermediate C array is large and should not be checked in.
 
-## Compact E1M1 Game tables
+## Previous compact E1M1 tables and retained Lite baseline
 
 The default firmware builds `Lite` and the simplified `Game` application.
 It does not embed the full converted WAD or link the GBADoom engine; use
 `SKYOS_BUILD_LEGACY_DOOM=ON` only to reproduce the old E1M1/Flat/Hybrid
-experiments. The compact map, gameplay and portal headers are generated from
+experiments. The retained original Lite map, gameplay and portal headers are generated from
 the checked-in converted WAD. After changing it, regenerate with
 `build_lite_grid.py`, `build_lite_game_data.py`, and `build_lite_portals.py`.
 Before packaging a test image, run the last two scripts with `--check` and
-run `test_lite_game_data.py`, `test_lite_portals.py`, `check_lite_game.c`,
-`check_lite_exit.c`, and `check_lite_rays.c` on the host. See the Lite README
-for game controls, scope, and the `DOOMG_PERF` log fields.
+run `test_lite_game_data.py`, `test_lite_portals.py`, and `check_lite_rays.c`
+on the host. These generators describe the old single-map data, while the
+current `check_lite_game.c` / `check_lite_exit.c` test the new Game state.
+See the Lite README for the earlier hardware measurements.
 
 `build_lite_sprites.py` extracts four enemy front frames and the blue key
 from that verified WAD into `E1M1Sprites.h`. Run it with `--check` and run

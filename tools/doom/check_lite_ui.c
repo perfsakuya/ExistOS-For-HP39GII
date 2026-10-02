@@ -38,7 +38,11 @@ int main(void) {
         hashes[tic] = image_hash(frame + 8u, PIXELS);
         memcpy(comparison, frame + 8u, PIXELS);
         DoomLite_DrawGameHud(frame + 8u, &game, NULL, 0u);
-        assert(!memcmp(comparison, frame + 8u, DOOM_GAME_VIEW_H * DOOM_GAME_LCD_W));
+        for (unsigned y = 0; y < DOOM_GAME_VIEW_H; ++y)
+            for (unsigned x = 0; x < DOOM_GAME_LCD_W; ++x)
+                if (y >= 8u || x < 216u) /* Small level/contrast badge owns this corner. */
+                    assert(comparison[y * DOOM_GAME_LCD_W + x] ==
+                           frame[8u + y * DOOM_GAME_LCD_W + x]);
         check_guards();
     }
     assert(hashes[15] == hashes[10]); /* B + flash, six tics. */
@@ -53,6 +57,9 @@ int main(void) {
         game.ammo = 200u;
         game.kills = 292u;
         game.blue_key = (uint8_t)(hp & 1u);
+        game.red_key = (uint8_t)(hp & 2u);
+        game.yellow_key = (uint8_t)(hp & 4u);
+        game.armor = (uint16_t)(hp * 2u);
         DoomLite_DrawGameWeapon(frame + 8u, &game);
         DoomLite_DrawGameHud(frame + 8u, &game, "DOOR OPEN", 0u);
         check_guards();
@@ -63,11 +70,29 @@ int main(void) {
     for (unsigned i = 0; i < PIXELS; ++i) assert(frame[8u + i] == 147u);
     DoomLite_DrawGameHud(frame + 8u, &game, NULL, 0u);
     check_guards();
+    game.map_index = 1u;
+    clear_frame();
+    DoomLite_DrawGameHud(frame + 8u, &game, NULL, 0u);
+    check_guards();
     game.completed = 0;
     game.health = 100u;
     clear_frame();
     DoomLite_DrawGameHud(frame + 8u, &game, "BLUE KEY", 2u);
     check_guards();
+    for (unsigned level = 0; level < DOOM_MAP_COUNT; ++level)
+        for (unsigned contrast = 0; contrast < 3u; ++contrast) {
+            DoomLiteGame_InitMap(&game, level);
+            game.contrast = (uint8_t)contrast;
+            game.blue_key = game.red_key = game.yellow_key = 1u;
+            game.health = game.armor = 200u;
+            game.backpack = 1u;
+            game.ammo = 400u;
+            game.shells = game.rockets = 100u;
+            game.cells = 600u;
+            clear_frame();
+            DoomLite_DrawGameHud(frame + 8u, &game, "NEED YELLOW", 1u);
+            check_guards();
+        }
     clear_frame();
     draw_patch(frame + 8u, &ui_stbar, -100, -10, DOOM_GAME_VIEW_H);
     draw_patch(frame + 8u, &ui_pisgb0, 250, 90, DOOM_GAME_VIEW_H);

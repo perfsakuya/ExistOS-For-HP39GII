@@ -1,6 +1,7 @@
 /* Host regression for the exact WAD exit-switch recess.
  * gcc -std=c11 -O2 -Wall -Wextra -Werror tools/doom/check_lite_exit.c
- *     System/applications/user/doom_lite/DoomLiteGame.c -o check_lite_exit.exe
+ *     System/applications/user/doom_lite/DoomLiteGame.c
+ *     System/applications/user/doom_lite/DoomMap.c -o check_lite_exit.exe
  */
 #include <assert.h>
 #include <stdio.h>
@@ -16,8 +17,10 @@ int main(void) {
     for (int x = -360; x >= -388; x -= 4)
         assert(!DoomLiteGame_IsSolid(&game, x * 256, 1296 * 256));
 
-    /* Keep the actual switch wall and top/bottom recess boundaries solid. */
-    assert(DoomLiteGame_IsSolid(&game, -392 * 256, 1296 * 256));
+    /* Radius-eight contact with the x=-400 switch wall is allowed; moving
+     * one unit closer overlaps it. Keep the true recess boundaries solid. */
+    assert(!DoomLiteGame_IsSolid(&game, -392 * 256, 1296 * 256));
+    assert(DoomLiteGame_IsSolid(&game, -393 * 256, 1296 * 256));
     assert(DoomLiteGame_IsSolid(&game, -390 * 256, 1287 * 256));
     assert(DoomLiteGame_IsSolid(&game, -390 * 256, 1305 * 256));
 

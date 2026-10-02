@@ -40,6 +40,7 @@ MODE_RE = re.compile(r"(?m)^DOOM_MODE\b[^\r\n]*")
 FAST_RE = re.compile(r"(?m)^DOOM_FAST\b[^\r\n]*")
 TIC_RE = re.compile(r"(?m)^DOOM_TIC\b[^\r\n]*")
 GAME_PERF_RE = re.compile(r"(?m)^DOOMG_PERF\b[^\r\n]*")
+GAME_DETAIL_RE = re.compile(r"(?m)^DOOMG_DETAIL\b[^\r\n]*")
 GAME_BOOT_RE = re.compile(r"(?m)^DOOMG_BOOT\b[^\r\n]*")
 GAME_EXIT_RE = re.compile(r"(?m)^DOOMG_EXIT\b[^\r\n]*")
 DIAG_HEARTBEAT_RE = re.compile(
@@ -112,7 +113,14 @@ def state():
     run = raw[last_start:] if mode == "full" else ""
     game_run = raw[last_game_boot:] if mode == "game" and last_game_boot >= 0 else ""
     game_perf = latest_fields(GAME_PERF_RE, game_run)
+    game_detail = latest_fields(GAME_DETAIL_RE, game_run)
     game_boot = GAME_BOOT_RE.findall(game_run)
+    map_load = game_run.rfind("DOOMG_BOOT phase=map_load")
+    perf_position = game_run.rfind("DOOMG_PERF")
+    if map_load > perf_position:
+        game_perf = game_detail = None
+    elif game_run.rfind("DOOMG_DETAIL") < perf_position:
+        game_detail = None  # A new PERF packet must not inherit the old DETAIL packet.
     game_exits = GAME_EXIT_RE.findall(game_run)
     latest_system_mem = mem[-1][0] if mem else -1
     latest_game_mem = next((sample for sample in reversed(game_mem)
@@ -165,14 +173,17 @@ def state():
     latest_task_list = raw[last_status:] if last_status >= 0 else ""
     doom_task_visible = bool(re.search(r"(?m)^Doom\s+[XRBSD]\s+", latest_task_list))
     if mode == "game":
+        boot_fields = fields(game_boot[-1]) if game_boot else {}
+        level = (game_perf or boot_fields).get("level", 1)
+        prefix = f"E1M{level} Game"
         if any("phase=ui_resume_done" in line for line in game_exits):
-            stage = "E1M1 Game 已退出"
+            stage = prefix + " 已退出"
         elif game_exits:
-            stage = "E1M1 Game 退出处理中"
+            stage = prefix + " 退出处理中"
         elif game_perf:
-            stage = "E1M1 Game 运行中"
+            stage = prefix + " 运行中"
         else:
-            stage = "E1M1 Game 启动中"
+            stage = prefix + " 启动中"
     elif mode == "lite_running":
         stage = "E1M1 Lite 运行中"
     elif mode == "lite_exited":
@@ -200,14 +211,15 @@ def state():
         "zram_kb": zram_kb,
         "heap_preallocated_kb": heap_preallocated_kb,
         "memory_history": [value for _, value in memory_history[-40:]],
-        "starts": raw.count("DOOM_START"),
+        "starts": raw.count("DOOM_START") + raw.count("DOOMG_BOOT phase=task_start"),
         "mode": "game" if mode == "game" else "hybrid" if fast_mode else "legacy" if mode == "full"
                 else "lite" if mode.startswith("lite") else "idle",
         "stage": stage,
         "zone_verified": raw.count("DOOM_ZONE verified"),
         "errors": len(errors),
         "frames": len(frames),
-        "latest_frame": int(frames[-1]) if frames else 0,
+        "latest_frame": (game_perf.get("frame_count", game_perf.get("frames", 0))
+                         if mode == "game" and game_perf else int(frames[-1]) if frames else 0),
         "performance": {
             "fps": round(last_perf[0] * 1000 / last_perf[1], 2) if last_perf[1] else None,
             "total_ms": round(last_perf[1] / last_perf[0]),
@@ -296,6 +308,13 @@ def state():
             "map": bool(game_perf["map"]) if "map" in game_perf else None,
             "zoom": game_perf.get("zoom"),
             "pistol_tics": game_perf.get("pistol_tics"),
+            "level": game_perf.get("level", 1),
+            "armor": game_perf.get("armor"),
+            "red_key": bool(game_perf["red"]) if "red" in game_perf else None,
+            "yellow_key": bool(game_perf["yellow"]) if "yellow" in game_perf else None,
+            "contrast": game_perf.get("contrast"),
+            "actors": game_perf.get("actors"),
+            "movers": game_perf.get("movers"),
             "x": game_perf.get("x"),
             "y": game_perf.get("y"),
         } if game_perf and all(key in game_perf for key in
@@ -307,6 +326,21 @@ def state():
                               "dropped_ticks"))
              and game_perf["frames"] > 0 and game_perf["elapsed_ms"] > 0 else None,
         "game_boot": game_boot[-1] if game_boot else None,
+        "game_resources": next(({
+            "state_kb": round(fields(line)["state_bytes"] / 1024, 2),
+            "render_kb": round(fields(line)["render_bytes"] / 1024, 2),
+        } for line in reversed(game_boot) if "state_bytes=" in line and "render_bytes=" in line), None),
+        "game_detail": {
+            **{f"{phase}_ms": round(game_detail[f"{phase}_total_us"] /
+                                     (game_detail["tics"] * 1000), 3)
+               if game_detail.get("tics") and f"{phase}_total_us" in game_detail else None
+               for phase in ("ai", "anim", "mover", "collision", "los")},
+            **{f"{phase}_max_ms": round(game_detail[f"{phase}_max_us"] / 1000, 3)
+               if f"{phase}_max_us" in game_detail else None
+               for phase in ("ai", "anim", "mover", "collision", "los")},
+            "raw": game_detail,
+        } if game_detail and game_perf and
+             game_detail.get("level", 1) == game_perf.get("level", 1) else None,
         "game_exit": game_exits[-1] if game_exits else None,
         "diagnostic": {
             "seconds": int(last_diagnostic[0]) if last_diagnostic else None,
@@ -315,7 +349,7 @@ def state():
             "critical": int(last_diagnostic[3]) if last_diagnostic else None,
             "last_stage": diagnostic_stages[-1] if diagnostic_stages else None,
         } if last_diagnostic or diagnostic_stages else None,
-        "exits": raw.count("DOOM_EXIT"),
+        "exits": raw.count("DOOM_EXIT") + raw.count("DOOMG_EXIT phase=task_delete"),
         "panics": raw.lower().count("system panic"),
         "latest_error": errors[-1] if errors else None,
         "lines": lines[-120:],

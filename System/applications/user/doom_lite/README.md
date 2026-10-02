@@ -1,6 +1,28 @@
 # E1M1 Lite
 
-## E1M1 Game MVP
+## Current Game: E1M1 and E1M2 candidate
+
+The native `Game` now uses the standard Freedoom 0.13.0 E1M1/E1M2 maps,
+immutable BSP/sparse line tables, and bounded actor/sector-mover pools. It
+supports three key colors, moving doors/platforms/floors, pickups, armor,
+secrets, damage floors, simplified monster AI and animation, level transition
+and death retry. Only the pistol is playable; this is not a demo-compatible
+replacement for the complete Doom engine.
+
+F3 selects three scene contrast levels. F2 advances from a completed E1M1
+to E1M2, retries after death, or replays a completed E1M2. The status bar
+shows real armor/ammo inventory and B/R/Y key ownership. Other controls
+retain the previous Game mappings. `Lite` stays as its independent baseline.
+
+Run `python tools/doom/run_game_checks.py --cc <native-gcc>` from the repo
+root for map/resource reproduction, logic, public-API walking routes, exact
+LOS/ray reference comparisons, framebuffer guards and host benchmarks.
+See [the candidate report](../../../../docs/doom-game-e1m1-e1m2.md)
+for scope, profiling fields, current measurements and hardware test gaps.
+The historical hardware FPS below refers to earlier single-map images;
+it does not establish the FPS of this two-map candidate.
+
+## Previous E1M1 Game MVP and hardware results
 
 The `Game` application adds a deliberately simplified, E1M1-specific game
 simulation to the Lite renderer. `build_lite_game_data.py` extracts medium

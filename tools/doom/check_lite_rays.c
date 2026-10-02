@@ -1,11 +1,11 @@
 /* Build with a host C compiler: gcc -std=c11 -O2 -Wall -Wextra -Werror
  * tools/doom/check_lite_rays.c
- * System/applications/user/doom_lite/DoomLiteGame.c -lm -o check_lite_rays.exe
+ * System/applications/user/doom_lite/DoomLiteGame.c
+ * System/applications/user/doom_lite/DoomMap.c -lm -o check_lite_rays.exe
  * This checks the production trigonometry against libm, compares rays with a
  * one-unit reference march, and checks the exact renderer's frame bounds.
  * Optional arguments: preview.pgm [facing] [print-ray-table], or
- * --game-preview preview.pgm [start|key|enemy|door|door-open] [pistol_tics], or
- * --game-map-preview preview.pgm [open|key-collected|zoom]. */
+ * Game scene/actors are covered separately by check_game_renderer.c. */
 #define DOOM_LITE_RAY_TEST
 #define LCD_PIX_W 256
 #define LCD_PIX_H 127
@@ -159,201 +159,11 @@ static int check_exit_alcove(void) {
     return 0;
 }
 
-static int check_game_sprites(void) {
-    DoomLiteGame game;
-    uint8_t frame[LITE_W * LITE_H];
-    unsigned key_index = E1M1_THING_COUNT;
-    unsigned enemy_index = E1M1_THING_COUNT;
-    DoomLiteGame_Init(&game);
-    for (unsigned i = 0; i < E1M1_THING_COUNT; ++i) {
-        if (e1m1_things[i].type == 5u &&
-            DoomLiteGame_ThingActive(&game, i)) key_index = i;
-        if (enemy_index == E1M1_THING_COUNT && game.enemy_hp[i])
-            enemy_index = i;
-    }
-    if (key_index == E1M1_THING_COUNT ||
-        enemy_index == E1M1_THING_COUNT) return 16;
-    memset(game.enemy_hp, 0, sizeof(game.enemy_hp));
-    game.x_q8 = ((int32_t)e1m1_things[key_index].x - 64) * 256;
-    game.y_q8 = (int32_t)e1m1_things[key_index].y * 256;
-    game.facing = 0;
-    for (unsigned ray = 0; ray < LITE_RAYS; ++ray)
-        game_wall_depth[ray] = 1536u;
-    game_wall_ready = 1;
-    memset(frame, 245, sizeof(frame));
-    DoomLite_RenderGameThings(frame, &game);
-    unsigned pixels = 0;
-    for (unsigned i = 0; i < sizeof(frame); ++i)
-        pixels += frame[i] != 245u;
-    if (!pixels) {
-        fprintf(stderr, "active blue key was not rendered\n");
-        return 17;
-    }
-    game.collected[key_index >> 3] |= (uint8_t)(1u << (key_index & 7u));
-    memset(frame, 245, sizeof(frame));
-    DoomLite_RenderGameThings(frame, &game);
-    for (unsigned i = 0; i < sizeof(frame); ++i) {
-        if (frame[i] != 245u) {
-            fprintf(stderr, "collected blue key remained visible\n");
-            return 18;
-        }
-    }
-    game.collected[key_index >> 3] &=
-        (uint8_t)~(1u << (key_index & 7u));
-    for (unsigned ray = 0; ray < LITE_RAYS; ++ray)
-        game_wall_depth[ray] = 8u;
-    memset(frame, 245, sizeof(frame));
-    DoomLite_RenderGameThings(frame, &game);
-    for (unsigned i = 0; i < sizeof(frame); ++i) {
-        if (frame[i] != 245u) {
-            fprintf(stderr, "blue key rendered through near wall\n");
-            return 19;
-        }
-    }
-    for (unsigned ray = 0; ray < LITE_RAYS; ++ray)
-        game_wall_depth[ray] = 1536u;
-    game.collected[key_index >> 3] |= (uint8_t)(1u << (key_index & 7u));
-    game.enemy_hp[enemy_index] = 20u;
-    game.x_q8 = ((int32_t)e1m1_things[enemy_index].x - 64) * 256;
-    game.y_q8 = (int32_t)e1m1_things[enemy_index].y * 256;
-    memset(frame, 245, sizeof(frame));
-    DoomLite_RenderGameThings(frame, &game);
-    pixels = 0;
-    for (unsigned i = 0; i < sizeof(frame); ++i)
-        pixels += frame[i] != 245u;
-    if (!pixels) {
-        fprintf(stderr, "live enemy was not rendered\n");
-        return 20;
-    }
-    unsigned shades = 0u;
-    for (unsigned color = 0; color < 256u; ++color) {
-        if (color == 245u) continue;
-        for (unsigned i = 0; i < sizeof(frame); ++i)
-            if (frame[i] == color) { ++shades; break; }
-    }
-    if (shades < 4u) {
-        fprintf(stderr, "enemy sprite lost grayscale detail: %u shades\n", shades);
-        return 35;
-    }
-    game.enemy_hp[enemy_index] = 0u;
-    memset(frame, 245, sizeof(frame));
-    DoomLite_RenderGameThings(frame, &game);
-    for (unsigned i = 0; i < sizeof(frame); ++i) {
-        if (frame[i] != 245u) {
-            fprintf(stderr, "dead enemy remained visible\n");
-            return 21;
-        }
-    }
-    printf("game sprites: blue key and enemy visibility, pickup, death, wall occlusion passed\n");
-    return 0;
-}
-
-static int check_game_map_markers(void) {
-    DoomLiteGame game;
-    uint8_t frame[LITE_W * LITE_H + 16u];
-    uint8_t plain[LITE_W * LITE_H];
-    DoomLiteGame_Init(&game);
-    memset(frame, 0xa5, sizeof(frame));
-    DoomLite_RenderFrame(frame + 8u, game.x_q8, game.y_q8, 0u, 1);
-    memcpy(plain, frame + 8u, sizeof(plain));
-    DoomLite_RenderGameMap(frame + 8u, &game, 1u);
-    for (unsigned i = 0; i < 8u; ++i) {
-        if (frame[i] != 0xa5 || frame[sizeof(frame) - 1u - i] != 0xa5) {
-            fprintf(stderr, "game map overlay crossed framebuffer bounds\n");
-            return 28;
-        }
-    }
-    /* The overview reserves 16 rows for the large HUD. Known E1M1 cells:
-     * door (114,67), key (156,69), exit (73,89), player (75,59). */
-    if (frame[67u * LITE_W + 114u + 8u] != 0u ||
-        frame[63u * LITE_W + 156u + 8u] != 0u ||
-        frame[69u * LITE_W + 156u + 8u] != 250u ||
-        frame[89u * LITE_W + 73u + 8u] != 0u ||
-        frame[59u * LITE_W + 82u + 8u] != 0u) {
-        fprintf(stderr, "game map door/key/exit/heading marks absent\n");
-        return 29;
-    }
-    game.door_open[0] = 1u;
-    game.collected[87u >> 3] |= (uint8_t)(1u << (87u & 7u));
-    game.facing = 64u;
-    DoomLite_RenderGameMap(frame + 8u, &game, 1u);
-    if (frame[67u * LITE_W + 114u + 8u] != 250u ||
-        frame[63u * LITE_W + 156u + 8u] == 0u ||
-        frame[59u * LITE_W + 82u + 8u] == 0u ||
-        frame[66u * LITE_W + 75u + 8u] != 0u) {
-        fprintf(stderr, "game map state/heading did not update\n");
-        return 30;
-    }
-    DoomLite_RenderGameMap(frame + 8u, &game, 2u);
-    DoomLite_DrawGameHud(frame + 8u, &game, "NEED BLUE", 2u);
-    if (frame[71u * LITE_W + 22u + 8u] != 0u ||
-        frame[78u * LITE_W + 22u + 8u] != 0u) {
-        fprintf(stderr, "zoom map does not follow player/heading\n");
-        return 36;
-    }
-    for (unsigned i = 0; i < 8u; ++i)
-        if (frame[i] != 0xa5 || frame[sizeof(frame) - 1u - i] != 0xa5) {
-            fprintf(stderr, "zoom map/HUD crossed framebuffer bounds\n");
-            return 37;
-        }
-    DoomLite_RenderFrame(frame + 8u, game.x_q8, game.y_q8, 0u, 1);
-    if (memcmp(frame + 8u, plain, sizeof(plain)) != 0) {
-        fprintf(stderr, "Lite map changed after Game overlay\n");
-        return 31;
-    }
-    printf("game map: large marks, 2x follow, HUD bounds, Lite isolation passed\n");
-    return 0;
-}
-
-static int check_sprite_clipping(void) {
-    uint8_t frame[LITE_W * LITE_H + 16u];
-    for (unsigned texture = 0; texture < E1M1_SPRITE_COUNT; ++texture) {
-        for (unsigned side = 0; side < 2u; ++side) {
-            DoomLiteGame game;
-            DoomLiteGame_Init(&game);
-            memset(game.enemy_hp, 0, sizeof(game.enemy_hp));
-            memset(game.collected, 255, sizeof(game.collected));
-            unsigned target = 0u;
-            while (target < E1M1_THING_COUNT &&
-                   (e1m1_things[target].type != e1m1_sprites[texture].thing_type ||
-                    !(e1m1_things[target].options & 2u) ||
-                    (e1m1_things[target].options & 16u)))
-                ++target;
-            if (target == E1M1_THING_COUNT) return 38;
-            game.enemy_hp[target] = 100u;
-            game.collected[target >> 3] &= (uint8_t)~(1u << (target & 7u));
-            game.x_q8 = ((int32_t)e1m1_things[target].x - 12) * 256;
-            game.y_q8 = ((int32_t)e1m1_things[target].y + (side ? 6 : -6)) * 256;
-            game.facing = 0u;
-            for (unsigned ray = 0; ray < LITE_RAYS; ++ray)
-                game_wall_depth[ray] = 1536u;
-            game_wall_ready = 1u;
-            memset(frame, 0xa5, sizeof(frame));
-            DoomLite_RenderGameThings(frame + 8u, &game);
-            unsigned drawn = 0u;
-            for (unsigned i = 8u; i < sizeof(frame) - 8u; ++i)
-                drawn += frame[i] != 0xa5;
-            if (!drawn) return 40;
-            for (unsigned i = 0; i < 8u; ++i)
-                if (frame[i] != 0xa5 || frame[sizeof(frame) - 1u - i] != 0xa5)
-                    return 39;
-        }
-    }
-    printf("packed sprites: left/right clipping and maximum scale bounds passed\n");
-    return 0;
-}
-
 int main(int argc, char **argv) {
     const int game_check = check_game_portals();
     if (game_check) return game_check;
     const int exit_check = check_exit_alcove();
     if (exit_check) return exit_check;
-    const int sprite_check = check_game_sprites();
-    if (sprite_check) return sprite_check;
-    const int map_check = check_game_map_markers();
-    if (map_check) return map_check;
-    const int clip_check = check_sprite_clipping();
-    if (clip_check) return clip_check;
     for (unsigned angle = 0; angle < 1024u; ++angle) {
         const int actual = sine_q14_fine((uint16_t)angle);
         const double expected = sin((double)angle * (6.283185307179586 / 1024.0)) * 16384.0;
@@ -428,75 +238,6 @@ int main(int argc, char **argv) {
     if (points != 12u) return 4;
     printf("checked %u fine-angle rays and %u rendered views from %u open cells; worst late=%u Q8\n",
            rays, points * 8u, points, worst_late_q8);
-    if (argc > 2 && strcmp(argv[1], "--game-map-preview") == 0) {
-        DoomLiteGame game;
-        DoomLiteGame_Init(&game);
-        if (argc > 3 && strcmp(argv[3], "open") == 0)
-            game.door_open[0] = 1u;
-        if (argc > 3 && strcmp(argv[3], "key-collected") == 0)
-            game.collected[87u >> 3] |= (uint8_t)(1u << (87u & 7u));
-        const unsigned zoom = argc > 3 && strcmp(argv[3], "zoom") == 0 ? 2u : 1u;
-        DoomLite_RenderGameMap(frame + 8u, &game, zoom);
-        DoomLite_DrawGameHud(frame + 8u, &game, NULL, zoom);
-        FILE *preview = fopen(argv[2], "wb");
-        if (!preview) return 32;
-        fprintf(preview, "P5\n%d %d\n255\n", LITE_W, LITE_H);
-        if (fwrite(frame + 8u, 1u, LITE_W * LITE_H, preview) !=
-            LITE_W * LITE_H) {
-            fclose(preview);
-            return 33;
-        }
-        if (fclose(preview)) return 34;
-        return 0;
-    }
-    if (argc > 2 && strcmp(argv[1], "--game-preview") == 0) {
-        DoomLiteGame game;
-        DoomLiteGame_Init(&game);
-        if (argc > 3 && strcmp(argv[3], "key") == 0) {
-            game.x_q8 = 2192 * 256;
-            game.y_q8 = 512 * 256;
-            game.facing = 64;
-        } else if (argc > 3 && strcmp(argv[3], "enemy") == 0) {
-            game.x_q8 = (816 - 80) * 256;
-            game.y_q8 = 448 * 256;
-            game.facing = 0;
-        } else if (argc > 3 && strcmp(argv[3], "exit") == 0) {
-            game.x_q8 = -288 * 256;
-            game.y_q8 = 1296 * 256;
-            game.facing = 128;
-        } else if (argc > 3 &&
-                   (strcmp(argv[3], "door") == 0 ||
-                    strcmp(argv[3], "door-open") == 0)) {
-            game.x_q8 = 832 * 256;
-            game.y_q8 = 384 * 256;
-            game.facing = 64;
-            if (strcmp(argv[3], "door-open") == 0)
-                game.door_open[0] = 1u;
-        }
-        if (argc > 4) {
-            const unsigned tics = (unsigned)strtoul(argv[4], NULL, 0);
-            game.pistol_tics = (uint8_t)(tics <= 15u ? tics : 15u);
-        }
-        DoomLite_RenderGameFrame(frame + 8u, game.x_q8, game.y_q8,
-                                  game.facing, 0, game.door_open);
-        /* Keep door previews unobstructed by the nearby starting enemy. */
-        if (argc <= 3 ||
-            (strcmp(argv[3], "door") != 0 &&
-             strcmp(argv[3], "door-open") != 0))
-            DoomLite_RenderGameThings(frame + 8u, &game);
-        DoomLite_DrawGameWeapon(frame + 8u, &game);
-        DoomLite_DrawGameHud(frame + 8u, &game, NULL, 0u);
-        FILE *preview = fopen(argv[2], "wb");
-        if (!preview) return 22;
-        fprintf(preview, "P5\n%d %d\n255\n", LITE_W, LITE_H);
-        if (fwrite(frame + 8u, 1u, LITE_W * LITE_H, preview) !=
-            LITE_W * LITE_H) {
-            fclose(preview);
-            return 23;
-        }
-        if (fclose(preview)) return 24;
-        return 0;
-    }
     if (argc > 1) {
         const unsigned facing = argc > 2 ? (unsigned)strtoul(argv[2], NULL, 0) : 0u;
         DoomLite_RenderFrame(frame + 8u, E1M1_START_X * 256,

@@ -35,8 +35,8 @@ static uint8_t glyph_row(char character, unsigned row) {
     return 0u;
 }
 
-static void draw_text(uint8_t *pixels, unsigned x, unsigned y,
-                      const char *message, unsigned scale) {
+static void draw_text_color(uint8_t *pixels, unsigned x, unsigned y,
+                            const char *message, unsigned scale, uint8_t ink) {
     for (; *message; ++message, x += 4u * scale) {
         if (x + 3u * scale > DOOM_GAME_LCD_W || y + 5u * scale > DOOM_GAME_LCD_H)
             break;
@@ -47,10 +47,15 @@ static void draw_text(uint8_t *pixels, unsigned x, unsigned y,
                 for (unsigned sy = 0; sy < scale; ++sy)
                     for (unsigned sx = 0; sx < scale; ++sx)
                         pixels[(y + row * scale + sy) * DOOM_GAME_LCD_W +
-                               x + col * scale + sx] = 16u;
+                               x + col * scale + sx] = ink;
             }
         }
     }
+}
+
+static void draw_text(uint8_t *pixels, unsigned x, unsigned y,
+                      const char *message, unsigned scale) {
+    draw_text_color(pixels, x, y, message, scale, 16u);
 }
 
 static void draw_number(uint8_t *pixels, unsigned x, unsigned y,
@@ -65,31 +70,34 @@ static void draw_number(uint8_t *pixels, unsigned x, unsigned y,
 }
 
 static void draw_end_panel(uint8_t *pixels, const char *title,
-                           unsigned title_x) {
-    const unsigned left = 64u, top = 43u, width = 128u, height = 42u;
+                           unsigned title_x, const char *action) {
+    const unsigned left = 48u, top = 32u, width = 160u, height = 60u;
     for (unsigned y = top; y < top + height; ++y) {
         uint8_t *row = pixels + y * DOOM_GAME_LCD_W + left;
         memset(row, y == top || y == top + height - 1u ? 20 : 233, width);
         row[0] = row[width - 1u] = 20u;
     }
-    draw_text(pixels, title_x, 52u, title, 2u);
-    draw_text(pixels, 100u, 69u, "F6 EXIT", 2u);
+    draw_text(pixels, title_x, 41u, title, 2u);
+    draw_text(pixels, 96u, 59u, action, 2u);
+    draw_text(pixels, 100u, 77u, "F6 EXIT", 2u);
 }
 
 static void draw_map_hud(uint8_t *pixels, const DoomLiteGame *game,
                          unsigned map_zoom) {
     memset(pixels, 237, DOOM_GAME_HUD_HEIGHT * DOOM_GAME_LCD_W);
-    draw_text(pixels, 2u, 3u, "HP", 2u);
-    draw_number(pixels, 22u, 3u, game->health, 3u, 2u);
-    draw_text(pixels, 54u, 3u, "AM", 2u);
-    draw_number(pixels, 74u, 3u, game->ammo, 3u, 2u);
-    draw_text(pixels, 106u, 3u, "K", 2u);
-    draw_number(pixels, 118u, 3u,
+    draw_text(pixels, 2u, 3u, game->map ? game->map->name : "E1M1", 2u);
+    draw_text(pixels, 42u, 3u, "HP", 2u);
+    draw_number(pixels, 62u, 3u, game->health, 3u, 2u);
+    draw_text(pixels, 92u, 3u, "AM", 2u);
+    draw_number(pixels, 112u, 3u, game->ammo, 3u, 2u);
+    draw_text(pixels, 142u, 3u, "K", 2u);
+    draw_number(pixels, 154u, 3u,
                 game->kills > 99u ? 99u : game->kills, 2u, 2u);
-    draw_text(pixels, 142u, 3u, "KEY", 2u);
-    draw_number(pixels, 172u, 3u, game->blue_key ? 1u : 0u, 1u, 2u);
+    draw_text_color(pixels, 180u, 3u, "B", 2u, game->blue_key ? 16u : 180u);
+    draw_text_color(pixels, 192u, 3u, "R", 2u, game->red_key ? 16u : 180u);
+    draw_text_color(pixels, 204u, 3u, "Y", 2u, game->yellow_key ? 16u : 180u);
     if (map_zoom)
-        draw_text(pixels, 194u, 3u, map_zoom == 1u ? "F4 1X" : "F4 2X", 2u);
+        draw_text(pixels, 224u, 3u, map_zoom == 1u ? "1X" : "2X", 2u);
 }
 
 static void draw_patch(uint8_t *pixels, const E1M1UiPatch *patch,
@@ -136,21 +144,29 @@ static void draw_status_bar(uint8_t *pixels, const DoomLiteGame *game) {
     const unsigned pain = (100u - (game->health > 100u ? 100u : game->health)) * 5u / 101u;
     const E1M1UiPatch *face = ui_faces[game->health ? pain : 5u];
     draw_patch(pixels, face, 117, (int)top + 1, DOOM_GAME_LCD_H);
-    /* The MVP has no armor inventory, so the classic armor field is zero. */
-    draw_patch_number(pixels, 170u, top + 4u, 0u, 0);
+    draw_patch_number(pixels, 170u, top + 4u, game->armor, 0);
     draw_patch(pixels, &ui_sttprcnt, 171, (int)top + 4, DOOM_GAME_LCD_H);
-    if (game->blue_key)
-        draw_patch(pixels, &ui_stkeys0, 194, (int)top + 1, DOOM_GAME_LCD_H);
-    /* Only bullets exist in the MVP. Unsupported ammo rows are dashes,
-     * rather than fictitious shell/rocket/cell inventory or capacity. */
+    const uint8_t keys[3] = {game->blue_key, game->red_key, game->yellow_key};
+    const char *key_names[3] = {"B", "R", "Y"};
+    for (unsigned k = 0u; k < 3u; ++k) {
+        const unsigned ky = top + 1u + k * 8u;
+        if (keys[k]) draw_patch(pixels, &ui_stkeys0, 194, (int)ky, DOOM_GAME_LCD_H);
+        /* Letters distinguish key colors on the monochrome LCD. */
+        draw_text_color(pixels, 207u, ky + 1u, key_names[k], 1u,
+                        keys[k] ? 16u : 168u);
+    }
+    /* The pistol is the playable weapon. Other pickups retain their real
+     * inventory for the next level; the small rows display that inventory. */
     draw_patch_number(pixels, 230u, top + 1u, game->ammo, 1);
-    draw_patch_number(pixels, 250u, top + 1u, 200u, 1);
+    draw_patch_number(pixels, 250u, top + 1u, game->backpack ? 400u : 200u, 1);
+    const uint16_t ammunition[3] = {game->shells, game->rockets, game->cells};
+    const uint16_t capacities[3] = {game->backpack ? 100u : 50u,
+                                  game->backpack ? 100u : 50u,
+                                  game->backpack ? 600u : 300u};
     for (unsigned row = 0; row < 3u; ++row) {
-        const unsigned y = top + 10u + row * 6u;
-        if (y < DOOM_GAME_LCD_H) {
-            memset(pixels + y * DOOM_GAME_LCD_W + 219u, 36, 10u);
-            memset(pixels + y * DOOM_GAME_LCD_W + 239u, 36, 10u);
-        }
+        const unsigned y = top + 8u + row * 6u;
+        draw_patch_number(pixels, 230u, y, ammunition[row], 1);
+        draw_patch_number(pixels, 250u, y, capacities[row], 1);
     }
 }
 
@@ -169,14 +185,24 @@ void DoomLite_DrawGameHud(uint8_t *pixels, const DoomLiteGame *game,
                           const char *message, unsigned map_zoom) {
     if (!pixels || !game) return;
     if (map_zoom) draw_map_hud(pixels, game, map_zoom);
-    else draw_status_bar(pixels, game);
+    else {
+        draw_status_bar(pixels, game);
+        const char *map_name = game->map ? game->map->name : "E1M1";
+        for (unsigned y = 0u; y < 8u; ++y)
+            memset(pixels + y * DOOM_GAME_LCD_W + 216u, 237u, 40u);
+        draw_text(pixels, 218u, 1u, map_name, 1u);
+        const char contrast[3] = {'C', (char)('1' + game->contrast), 0};
+        draw_text(pixels, 242u, 1u, contrast, 1u);
+    }
     if (message) {
         const unsigned y = map_zoom ? DOOM_GAME_LCD_H - DOOM_GAME_HUD_HEIGHT : 0u;
         memset(pixels + y * DOOM_GAME_LCD_W, 237,
                DOOM_GAME_HUD_HEIGHT * DOOM_GAME_LCD_W);
         draw_text(pixels, 4u, y + 3u, message, 2u);
     }
-    if (game->completed) draw_end_panel(pixels, "E1M1 CLEAR", 88u);
-    else if (!game->health) draw_end_panel(pixels, "GAME OVER", 92u);
+    if (game->completed) {
+        const char *title = game->map_index ? "E1M2 CLEAR" : "E1M1 CLEAR";
+        draw_end_panel(pixels, title, 88u, game->map_index ? "F2 REPLAY" : "F2 NEXT");
+    } else if (!game->health) draw_end_panel(pixels, "GAME OVER", 92u, "F2 RETRY");
 }
 
