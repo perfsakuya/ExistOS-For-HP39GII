@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HP 39gII 串口调试</title>
+<style>
+  :root { color-scheme: light dark; font-family: "Segoe UI", "Microsoft YaHei", sans-serif; }
+  body { margin: 0; padding: 16px; background: Canvas; color: CanvasText; }
+  h1 { font-size: 19px; font-weight: 600; margin: 0 0 12px; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+  .status { font-size: 13px; padding: 4px 9px; border-radius: 99px; background: color-mix(in srgb, CanvasText 9%, Canvas); }
+  .status.ok { color: #18834a; }
+  .status.bad { color: #b65d18; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(125px, 1fr)); gap: 9px; margin: 12px 0; }
+  .metric { background: color-mix(in srgb, CanvasText 6%, Canvas); border-radius: 8px; padding: 9px 10px; }
+  .label { font-size: 12px; opacity: .7; }
+  .value { font-variant-numeric: tabular-nums; font-size: 21px; margin-top: 3px; }
+  .events { display: flex; flex-wrap: wrap; gap: 7px; margin: 8px 0 15px; font-size: 13px; }
+  .events span { background: color-mix(in srgb, CanvasText 7%, Canvas); padding: 4px 7px; border-radius: 6px; }
+  .fault { color: #bd3030; font-weight: 600; min-height: 20px; margin: 7px 0; }
+  h2 { font-size: 14px; font-weight: 600; margin: 16px 0 8px; }
+  svg { width: 100%; height: 90px; background: color-mix(in srgb, CanvasText 4%, Canvas); border-radius: 6px; }
+  polyline { fill: none; stroke: #2680cb; stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .toolbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .toolbar a { color: LinkText; font-size: 12px; }
+  pre { font: 12px/1.45 Consolas, "Cascadia Code", monospace; white-space: pre-wrap; overflow-wrap: anywhere; background: color-mix(in srgb, CanvasText 6%, Canvas); border-radius: 8px; padding: 10px; max-height: 390px; overflow-y: auto; }
+  .error-line { color: #bd3030; }
+  @media (prefers-color-scheme: dark) { .status.ok { color: #5fd496; } .status.bad { color: #efad5c; } .fault, .error-line { color: #ff7777; } }
+</style>
+</head>
+<body>
+<div class="top"><h1>HP 39gII · 串口调试</h1><span id="status" class="status">连接中…</span></div>
+<div class="grid">
+  <div class="metric"><div class="label">System 已分配</div><div class="value" id="mem">—</div></div>
+  <div class="metric"><div class="label">ZRAM 占用</div><div class="value" id="zram">—</div></div>
+</div>
+<div class="events" aria-live="polite"><span id="stage">等待启动</span><span id="starts">启动 0</span><span id="zone">交换区校验 0</span><span id="frames">最新帧 0</span><span id="exits">退出 0</span><span id="errors">错误 0</span><span id="panics">Panic 0</span></div>
+<div id="fault" class="fault" role="status"></div>
+<h2>内存变化 · KB</h2><svg viewBox="0 0 400 90" preserveAspectRatio="none" aria-label="最近 40 次 System 内存采样"><polyline id="memory-line" points=""></polyline></svg>
+<div class="toolbar"><h2>原始串口输出</h2><a href="/log" target="_blank" rel="noopener">打开完整日志</a></div>
+<pre id="log" aria-label="最近 120 行串口日志"></pre>
+<script>
+const byId = id => document.getElementById(id);
+function plot(values) {
+  if (values.length < 2) { byId('memory-line').setAttribute('points', ''); return; }
+  const low = Math.min(...values) - 5, high = Math.max(...values) + 5;
+  const points = values.map((v, i) => `${(i / (values.length - 1) * 400).toFixed(1)},${(82 - (v - low) / (high - low) * 74).toFixed(1)}`).join(' ');
+  byId('memory-line').setAttribute('points', points);
+}
+async function refresh() {
+  try {
+    const response = await fetch('/api/state', {cache: 'no-store'});
+    const s = await response.json();
+    const status = byId('status');
+    status.textContent = s.connected ? `${s.serial_name} 日志活跃` : `等待 ${s.serial_name} 日志`;
+    status.className = 'status ' + (s.connected ? 'ok' : 'bad');
+    byId('mem').textContent = s.memory_kb ? `${s.memory_kb[0]} / ${s.memory_kb[1]} KB` : '—';
+    byId('zram').textContent = s.zram_kb ? `${s.zram_kb[0]} / ${s.zram_kb[1]} KB` : '—';
+    byId('starts').textContent = `启动 ${s.starts}`;
+    byId('stage').textContent = s.stage;
+    byId('zone').textContent = `交换区校验 ${s.zone_verified}`;
+    byId('frames').textContent = `最新帧 ${s.latest_frame}`;
+    byId('exits').textContent = `退出 ${s.exits}`;
+    byId('errors').textContent = `错误 ${s.errors}`;
+    byId('panics').textContent = `Panic ${s.panics}`;
+    byId('fault').textContent = s.latest_error ? `最近错误：${s.latest_error}` : '';
+    plot(s.memory_history);
+    const log = byId('log');
+    const nearBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 25;
+    log.textContent = s.lines.join('\n');
+    if (nearBottom) log.scrollTop = log.scrollHeight;
+  } catch (error) {
+    byId('status').textContent = '面板服务未连接';
+    byId('status').className = 'status bad';
+  }
+}
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
