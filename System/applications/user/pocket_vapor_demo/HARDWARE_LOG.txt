@@ -1,0 +1,86 @@
+SKYVAPOR_KEY key=4 rows=40 render_us=171 queue_us=1576 alloc=64328
+SKYVAPOR_KEY key=4 rows=40 render_us=171 queue_us=1575 alloc=64328
+=============SYSTEM STATUS=================
+Task Name         Task Status   Priority   Stack   ID
+PrintTask      	X	4	226	1
+VaporDemo      	R	2	1863	7
+IDLE           	R	0	370	3
+System         	B	2	220	2
+UICore         	S	4	0	4
+
+Task Name                Running Count         CPU %
+PrintTask      	20		<1%
+VaporDemo      	5		<1%
+IDLE           	3885		97%
+System         	1		<1%
+UICore         	103		2%
+
+Status:  X-Running  R-Ready  B-Block  S-Suspend  D-Delete
+Allocate MEM:62/276 KB
+ZRAM:23/92 KB
+Compression_rate: 0.06
+SRAM Heap Pre-allocated: 66 KB
+Swap Heap Pre-allocated: 0 KB
+SKYVAPOR_KEY key=28 rows=40 render_us=173 queue_us=1575 alloc=64328
+SKYVAPOR_KEY key=28 rows=40 render_us=171 queue_us=1578 alloc=64328
+SKYVAPOR_KEY key=28 rows=40 render_us=171 queue_us=1572 alloc=64328
+SKYVAPOR_KEY key=4 rows=40 render_us=171 queue_us=1577 alloc=64328
+SKYVAPOR_KEY key=4 rows=40 render_us=171 queue_us=1573 alloc=64328
+SKYVAPOR_EXIT alloc=64328
+=============SYSTEM STATUS=================
+Task Name         Task Status   Priority   Stack   ID
+PrintTask      	X	4	226	1
+UICore         	R	4	0	4
+IDLE           	R	0	370	3
+System         	B	2	220	2
+
+Task Name                Running Count         CPU %
+PrintTask      	27		<1%
+IDLE           	4853		97%
+System         	1		<1%
+UICore         	135		2%
+
+Status:  X-Running  R-Ready  B-Block  S-Suspend  D-Delete
+Allocate MEM:52/276 KB
+ZRAM:26/92 KB
+Compression_rate: 0.06
+SRAM Heap Pre-allocated: 66 KB
+Swap Heap Pre-allocated: 0 KB
+=============SYSTEM STATUS=================
+Task Name         Task Status   Priority   Stack   ID
+PrintTask      	X	4	226	1
+UICore         	R	4	0	4
+IDLE           	R	0	370	3
+System         	B	2	220	2
+
+Task Name                Running Count         CPU %
+PrintTask      	32		<1%
+IDLE           	5842		97%
+System         	1		<1%
+UICore         	146		2%
+
+Status:  X-Running  R-Ready  B-Block  S-Suspend  D-Delete
+Allocate MEM:52/276 KB
+ZRAM:26/92 KB
+Compression_rate: 0.26
+SRAM Heap Pre-allocated: 66 KB
+Swap Heap Pre-allocated: 0 KB
+=============SYSTEM STATUS=================
+Task Name         Task Status   Priority   Stack   ID
+PrintTask      	X	4	226	1
+UICore         	R	4	0	4
+IDLE           	R	0	370	3
+System         	B	2	220	2
+
+Task Name                Running Count         CPU %
+PrintTask      	37		<1%
+IDLE           	6831		97%
+System         	1		<1%
+UICore         	157		2%
+
+Status:  X-Running  R-Ready  B-Block  S-Suspend  D-Delete
+Allocate MEM:52/276 KB
+ZRAM:26/92 KB
+Compression_rate: 0.26
+SRAM Heap Pre-allocated: 66 KB
+Swap Heap Pre-allocated: 0 KB
