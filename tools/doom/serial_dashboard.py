@@ -20,6 +20,7 @@ PERF_RE = re.compile(
     r"DOOM_PERF frames=(\d+) wall_ms=(\d+) convert_ms=(\d+) "
     r"display_ms=(\d+) other_ms=(\d+)"
 )
+PHASE_RE = re.compile(r"DOOM_PHASE frames=(\d+) logic_ms=(\d+) draw_ms=(\d+)")
 
 
 def state():
@@ -32,6 +33,8 @@ def state():
     frames = FRAME_RE.findall(raw[last_start:] if last_start >= 0 else "")
     perf = PERF_RE.findall(raw[last_start:] if last_start >= 0 else "")
     last_perf = [int(value) for value in perf[-1]] if perf else None
+    phases = PHASE_RE.findall(raw[last_start:] if last_start >= 0 else "")
+    last_phase = [int(value) for value in phases[-1]] if phases else None
     last_exit = raw.rfind("DOOM_EXIT")
     last_zone = raw.rfind("DOOM_ZONE backing")
     last_verified = raw.rfind("DOOM_ZONE verified")
@@ -71,6 +74,10 @@ def state():
             "display_ms": round(last_perf[3] / last_perf[0]),
             "other_ms": round(last_perf[4] / last_perf[0]),
         } if last_perf and last_perf[0] else None,
+        "phases": {
+            "logic_ms": round(last_phase[1] / last_phase[0]),
+            "draw_ms": round(last_phase[2] / last_phase[0]),
+        } if last_phase and last_phase[0] else None,
         "exits": raw.count("DOOM_EXIT"),
         "panics": raw.lower().count("system panic"),
         "latest_error": errors[-1] if errors else None,

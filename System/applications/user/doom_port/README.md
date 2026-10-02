@@ -23,7 +23,9 @@ console. The exit path frees the conversion buffer and resumes the System UI.
 The LCD palette is converted to a 256-entry grayscale lookup table only when
 the game changes palettes. Serial output includes `DOOM_PERF` every 16 frames:
 the wall time and time spent converting pixels and submitting LCD updates.
-The remaining time includes engine work, VM swap, and serial overhead.
+`DOOM_PHASE` separates game logic from drawing, which includes pixel conversion
+and LCD submission. The remaining wall time includes engine work, VM swap,
+and serial overhead.
 
 The embedded data file was produced from `freedoom1.wad` in the official
 Freedoom 0.13.0 release using `tools/doom/trim_e1m1.py`, GBADoom's

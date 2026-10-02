@@ -44,6 +44,9 @@ static uint32_t perf_wall_ms;
 static uint32_t perf_convert_ms;
 static uint32_t perf_display_ms;
 static unsigned perf_samples;
+static uint32_t phase_logic_ms;
+static uint32_t phase_draw_ms;
+static unsigned phase_samples;
 
 /* The display FIFO has four entries. Five one-pixel requests issued after
  * the scene force its source buffer to have been consumed before reuse. */
@@ -57,6 +60,20 @@ int SkyOS_DoomGetTics(void) {
     return (int)((ms / 1000u) * TICRATE + ((ms % 1000u) * TICRATE) / 1000u);
 }
 
+unsigned SkyOS_DoomNowMs(void) { return ll_get_time_ms(); }
+
+void SkyOS_DoomProfilePhases(unsigned logic_ms, unsigned draw_ms) {
+    phase_logic_ms += logic_ms;
+    phase_draw_ms += draw_ms;
+    if (++phase_samples == 16u) {
+        printf("DOOM_PHASE frames=%u logic_ms=%lu draw_ms=%lu\n",
+               phase_samples, (unsigned long)phase_logic_ms,
+               (unsigned long)phase_draw_ms);
+        phase_logic_ms = phase_draw_ms = 0;
+        phase_samples = 0;
+    }
+}
+
 void I_InitScreen_e32(void) {
     previous_key = 0;
     previous_code = 0;
@@ -66,6 +83,8 @@ void I_InitScreen_e32(void) {
     last_frame_ms = 0;
     perf_wall_ms = perf_convert_ms = perf_display_ms = 0;
     perf_samples = 0;
+    phase_logic_ms = phase_draw_ms = 0;
+    phase_samples = 0;
 }
 void I_CreateBackBuffer_e32(void) { memset(game_pixels, 0, DOOM_PIXELS * sizeof(*game_pixels)); }
 int I_GetVideoWidth_e32(void) { return DOOM_WIDTH; }

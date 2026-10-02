@@ -79,6 +79,11 @@ void GetFirstMap(int *ep, int *map); // Ty 08/29/98 - add "-warp x" functionalit
 static void D_PageDrawer(void);
 static void D_UpdateFPS(void);
 
+#ifdef SKYOS
+extern unsigned SkyOS_DoomNowMs(void);
+extern void SkyOS_DoomProfilePhases(unsigned logic_ms, unsigned draw_ms);
+#endif
+
 
 // CPhipps - removed wadfiles[] stuff
 
@@ -262,6 +267,9 @@ static void D_DoomLoop(void)
 {
     for (;;)
     {
+#ifdef SKYOS
+        const unsigned frame_start_ms = SkyOS_DoomNowMs();
+#endif
         // frame syncronous IO operations
 
         I_StartFrame();
@@ -289,7 +297,14 @@ static void D_DoomLoop(void)
             S_UpdateSounds(_g->player.mo);// move positional sounds
 
         // Update display, next frame, with current state.
+#ifdef SKYOS
+        const unsigned draw_start_ms = SkyOS_DoomNowMs();
+#endif
         D_Display();
+#ifdef SKYOS
+        SkyOS_DoomProfilePhases(draw_start_ms - frame_start_ms,
+                               SkyOS_DoomNowMs() - draw_start_ms);
+#endif
 
 
         if(_g->fps_show)

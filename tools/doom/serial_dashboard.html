@@ -37,7 +37,7 @@
   <div class="metric"><div class="label">Freedoom 帧率</div><div class="value" id="fps">—</div></div>
   <div class="metric"><div class="label">平均每帧耗时</div><div class="value" id="frametime">—</div></div>
 </div>
-<div class="events"><span id="convert">灰度转换 —</span><span id="display">显示提交 —</span><span id="other">引擎及其他 —</span></div>
+<div class="events"><span id="logic">游戏逻辑 —</span><span id="draw">绘制含显示 —</span><span id="convert">灰度转换 —</span><span id="display">显示提交 —</span><span id="other">引擎及其他 —</span></div>
 <div class="events" aria-live="polite"><span id="stage">等待启动</span><span id="starts">启动 0</span><span id="zone">交换区校验 0</span><span id="frames">最新帧 0</span><span id="exits">退出 0</span><span id="errors">错误 0</span><span id="panics">Panic 0</span></div>
 <div id="fault" class="fault" role="status"></div>
 <h2>内存变化 · KB</h2><svg viewBox="0 0 400 90" preserveAspectRatio="none" aria-label="最近 40 次 System 内存采样"><polyline id="memory-line" points=""></polyline></svg>
@@ -62,6 +62,8 @@ async function refresh() {
     byId('zram').textContent = s.zram_kb ? `${s.zram_kb[0]} / ${s.zram_kb[1]} KB` : '—';
     byId('fps').textContent = s.performance?.fps != null ? `${s.performance.fps} fps` : '—';
     byId('frametime').textContent = s.performance ? `${s.performance.total_ms} ms` : '—';
+    byId('logic').textContent = `游戏逻辑 ${s.phases?.logic_ms ?? '—'} ms`;
+    byId('draw').textContent = `绘制含显示 ${s.phases?.draw_ms ?? '—'} ms`;
     byId('convert').textContent = `灰度转换 ${s.performance?.convert_ms ?? '—'} ms`;
     byId('display').textContent = `显示提交 ${s.performance?.display_ms ?? '—'} ms`;
     byId('other').textContent = `引擎及其他 ${s.performance?.other_ms ?? '—'} ms`;
