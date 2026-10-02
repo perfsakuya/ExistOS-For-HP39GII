@@ -35,10 +35,15 @@ def state():
     last_exit = raw.rfind("DOOM_EXIT")
     last_zone = raw.rfind("DOOM_ZONE backing")
     last_verified = raw.rfind("DOOM_ZONE verified")
+    last_status = raw.rfind("=============SYSTEM STATUS")
+    latest_task_list = raw[last_status:] if last_status >= 0 else ""
+    doom_task_visible = bool(re.search(r"(?m)^Doom\s+[XRBSD]\s+", latest_task_list))
     if last_start < 0:
         stage = "等待启动"
     elif last_exit > last_start:
         stage = "已退出"
+    elif last_status > last_start and not doom_task_visible:
+        stage = "应用界面"
     elif last_verified > last_start:
         stage = "引擎运行中"
     elif last_zone > last_start:
