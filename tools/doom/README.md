@@ -1,5 +1,22 @@
 # Rebuilding the embedded E1M1 asset
 
+## Community ports and expansion audit
+
+See [the source comparison and expansion plan](../../docs/doom-community-expansion.md)
+for the pinned nRF52840/MG24 sources, 39gII paging constraints, animation payloads
+and map limits. `audit_expansion.py` reads a standard (unconverted) Freedoom IWAD
+and reports all maps and four enemy sprite families without changing firmware:
+
+```powershell
+python tools/doom/audit_expansion.py ../Freedoom-research/extracted/freedoom-0.13.0/freedoom1.wad --output docs/doom-expansion-audit.json
+python -m unittest discover -s tools/doom -p test_audit_expansion.py -v
+```
+
+The checked-in JSON is a reproducible resource audit, not a playability or
+performance result. Proposed mutable-state budgets exclude OS and renderer costs.
+
+## Rebuild the converted asset
+
 1. Obtain Freedoom release 0.13.0 from
    <https://github.com/freedoom/freedoom/releases/tag/v0.13.0> and verify
    the official release checksum before extraction.
