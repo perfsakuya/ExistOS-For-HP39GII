@@ -37,6 +37,8 @@ list(APPEND SYS_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/pocket_vapor_demo/VaporCore.c
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/pocket_vapor_demo/VaporDisplay.c
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/pocket_vapor_demo/VaporDemo.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_probe/DoomProbeRender.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_probe/DoomProbe.c
 )
 include_directories(./applications/user/pocket_vapor_demo/runtime)
 aux_source_directory(./kernel/scheduler/freertos/core                SYS_SRCS)
