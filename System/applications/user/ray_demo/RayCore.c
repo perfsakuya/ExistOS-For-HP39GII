@@ -6,9 +6,9 @@
 
 /* This scene and camera are shared with the polygon preview. */
 const RaySphere Ray_Spheres[RAY_SPHERE_COUNT] = {
-    {{-1.45f, 0.75f, 1.25f}, 0.75f, 0.78f, 0.00f, 0.18f},
-    {{ 0.15f, 0.90f, 2.10f}, 0.90f, 0.55f, 0.62f, 0.55f},
-    {{ 1.65f, 0.65f, 0.80f}, 0.65f, 0.50f, 0.00f, 0.30f}
+    {{-1.70f, 0.90f, 1.10f}, 0.90f, 0.78f, 0.00f, 0.18f},
+    {{ 0.15f, 1.08f, 2.10f}, 1.08f, 0.55f, 0.62f, 0.55f},
+    {{ 1.90f, 0.78f, 0.60f}, 0.78f, 0.50f, 0.00f, 0.30f}
 };
 
 /* Unit vector from a surface towards the directional light. */
@@ -17,7 +17,7 @@ const RayVec3 Ray_LightDirection = {
 };
 
 static const float sphere_inverse_radius[RAY_SPHERE_COUNT] = {
-    1.33333333f, 1.11111111f, 1.53846154f
+    1.11111111f, 0.92592593f, 1.28205128f
 };
 
 #define RAY_PI              3.14159265358979323846f

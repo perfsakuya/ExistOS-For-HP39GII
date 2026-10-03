@@ -7,6 +7,9 @@ checkerboard floor, a gradient sky, one directional light, hard shadows and
 one mirror reflection. It uses independent C implementations of analytic
 sphere/plane intersections and polygon preview drawing; no scene files or
 full image of floating-point colors are allocated at runtime.
+The three sphere radii are 0.90, 1.08 and 0.78 scene units, enlarged by 20%
+from the initial preview. Their centers keep each sphere tangent to the floor
+and separated from the others; tracing, collision and preview share the scene.
 
 | Key | Action |
 |---|---|
@@ -100,7 +103,7 @@ saved under `build/ray-validation/`; host durations do not establish ARM
 performance. Actual moving response, image readability, trace completion time,
 restart and exit stability still require device testing.
 
-The first signed ARM candidate is 5,937,332 bytes. Its ELF reports 5,927,872
+The first signed ARM candidate is 5,937,340 bytes. Its ELF reports 5,927,880
 bytes of text, 4,948 bytes of data and 86,240 bytes of BSS; it fits both the
 14 MiB VM ROM window and the System partition. The six host verification
 stages passed, including 13 dashboard tests. Static ARM stack output reports
