@@ -25,12 +25,12 @@ void DoomLite_RenderGameFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
                               const uint8_t door_open[E1M1_DOOR_COUNT]);
 
 /* Game map: zoom=1 shows the full map, zoom=2 follows the player at 2x.
- * The top 16 rows are reserved for the HUD. Includes large objective marks. */
+ * Uses view rows 0..100 above the shared classic bar, with large objectives. */
 void DoomLite_RenderGameMap(uint8_t *pixels, const DoomLiteGame *game,
                             unsigned zoom);
 
 /* Draw packed Freedoom actor animations, grounded corpses, three keys and
- * common pickups against the native scene's wall span cache. Call immediately
+ * common pickups against the native scene's wall/plane depth cache. Call immediately
  * after RenderGameScene and before the weapon/HUD; collected things are omitted. */
 void DoomLite_RenderGameThings(uint8_t *pixels, const DoomLiteGame *game);
 
@@ -43,12 +43,19 @@ typedef struct {
     uint32_t sprite_candidates, sprite_pixels;
     uint32_t surface_limit_hits;
     uint32_t surface_limit_pixels; /* Remaining ray rows filled by bounded fallback. */
+    uint32_t ray_us, plane_us, wall_us; /* Disjoint scene stages, optional clock. */
+    uint32_t world_texture_pixels, plane_texture_pixels;
+    uint32_t span_cache_bytes; /* This frame's contiguous active span payload. */
 } DoomLiteRenderStats;
 
 /* Counters reset by RenderGameScene/Map; Things extends the same frame. */
 const DoomLiteRenderStats *DoomLite_GetRenderStats(void);
 /* Static writable caches only; excludes the borrowed LCD framebuffer. */
 unsigned DoomLite_RenderWorkingSetBytes(void);
+unsigned DoomLite_WorldReadonlyBytes(void);
+/* Supply the same monotonic microsecond clock used by the game task.
+ * Only phase boundaries are sampled; no calls inside pixel loops. */
+void DoomLite_SetRenderClock(uint32_t (*clock_us)(void));
 
 #ifdef __cplusplus
 }

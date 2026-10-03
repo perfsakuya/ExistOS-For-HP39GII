@@ -40,9 +40,8 @@ int main(void) {
         DoomLite_DrawGameHud(frame + 8u, &game, NULL, 0u);
         for (unsigned y = 0; y < DOOM_GAME_VIEW_H; ++y)
             for (unsigned x = 0; x < DOOM_GAME_LCD_W; ++x)
-                if (y >= 8u || x < 216u) /* Small level/contrast badge owns this corner. */
-                    assert(comparison[y * DOOM_GAME_LCD_W + x] ==
-                           frame[8u + y * DOOM_GAME_LCD_W + x]);
+                assert(comparison[y * DOOM_GAME_LCD_W + x] ==
+                       frame[8u + y * DOOM_GAME_LCD_W + x]);
         check_guards();
     }
     assert(hashes[15] == hashes[10]); /* B + flash, six tics. */
@@ -61,7 +60,10 @@ int main(void) {
         game.yellow_key = (uint8_t)(hp & 4u);
         game.armor = (uint16_t)(hp * 2u);
         DoomLite_DrawGameWeapon(frame + 8u, &game);
+        memcpy(comparison, frame + 8u, PIXELS);
         DoomLite_DrawGameHud(frame + 8u, &game, "DOOR OPEN", 0u);
+        if (hp) assert(!memcmp(comparison, frame + 8u,
+                              DOOM_GAME_VIEW_H * DOOM_GAME_LCD_W));
         check_guards();
     }
     clear_frame();
@@ -91,6 +93,8 @@ int main(void) {
             game.cells = 600u;
             clear_frame();
             DoomLite_DrawGameHud(frame + 8u, &game, "NEED YELLOW", 1u);
+            for (unsigned i = 0; i < DOOM_GAME_VIEW_H * DOOM_GAME_LCD_W; ++i)
+                assert(frame[8u + i] == 147u);
             check_guards();
         }
     clear_frame();

@@ -50,6 +50,7 @@ def main() -> None:
     run("python-unit", [python, "-m", "unittest", "discover", "-s", "tools/doom", "-p", "test_*.py"])
     run("maps-reproduce", [python, "tools/doom/build_game_maps.py", "--check"])
     run("sprites-reproduce", [python, "tools/doom/build_game_sprites.py", "--check"])
+    run("textures-reproduce", [python, "tools/doom/build_game_world.py", "--check"])
     run("routes-audit", [python, "tools/doom/audit_game_routes.py", "--output", str(output / "routes.json")])
     shared = [str(MODULE / "DoomLiteGame.c"), str(MODULE / "DoomMap.c")]
     tests = {
@@ -61,13 +62,17 @@ def main() -> None:
         "ui": (["tools/doom/check_lite_ui.c", *shared], []),
         "lite-rays": (["tools/doom/check_lite_rays.c", *shared], []),
         "renderer": (["tools/doom/check_game_renderer.c", *shared], [str(output)]),
+        "world-render": (["tools/doom/check_game_world_render.c", *shared], []),
+        "platform": (["tools/doom/check_game_platform.c", *shared], [str(output)]),
+        "viewport": (["tools/doom/check_game_viewport.c", str(MODULE / "DoomLite.c"),
+                      *shared, str(MODULE / "DoomLiteHud.c")], [str(output)]),
         "benchmark": (["tools/doom/check_game_bench.c", str(MODULE / "DoomLite.c"),
                        *shared, str(MODULE / "DoomLiteHud.c")], [str(output)]),
     }
     for name, (sources, arguments) in tests.items():
         binary = output / (name + (".exe" if sys.platform == "win32" else ""))
         flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror", "-I", str(MODULE)]
-        if name == "benchmark":
+        if name in ("benchmark", "viewport"):
             flags += ["-DDOOM_LITE_RAY_TEST", "-DLCD_PIX_W=256", "-DLCD_PIX_H=127"]
         run(name + "-compile", [args.cc, *flags, *sources, "-lm", "-o", str(binary)])
         run(name, [str(binary), *arguments])

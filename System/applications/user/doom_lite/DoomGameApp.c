@@ -39,6 +39,8 @@ typedef struct {
     uint32_t last_render_us;
     DoomLiteRenderStats render_counts;
     uint32_t max_cells, max_line_tests;
+    uint32_t ray_max_us, plane_max_us, wall_max_us;
+    uint32_t span_peak_bytes;
     unsigned frames, logic_ticks, interval_samples, dropped_ticks, total_frames;
 } GamePerf;
 
@@ -119,7 +121,10 @@ static void log_perf(GamePerf *perf, DoomLiteGame *game,
            (unsigned)m->mover_high_water, (unsigned)m->awake_actors);
     printf(" rays=%lu cells=%lu line_tests=%lu boundaries=%lu surfaces=%lu "
            "sprite_candidates=%lu sprite_pixels=%lu surface_limits=%lu "
-           "max_cells=%lu max_line_tests=%lu surface_limit_pixels=%lu\n",
+           "max_cells=%lu max_line_tests=%lu surface_limit_pixels=%lu "
+           "ray_total_us=%lu ray_max_us=%lu plane_total_us=%lu plane_max_us=%lu "
+           "wall_total_us=%lu wall_max_us=%lu world_pixels=%lu plane_pixels=%lu "
+           "span_total_bytes=%lu span_peak_bytes=%lu\n",
            (unsigned long)perf->render_counts.rays,
            (unsigned long)perf->render_counts.cells,
            (unsigned long)perf->render_counts.line_tests,
@@ -129,7 +134,14 @@ static void log_perf(GamePerf *perf, DoomLiteGame *game,
            (unsigned long)perf->render_counts.sprite_pixels,
            (unsigned long)perf->render_counts.surface_limit_hits,
            (unsigned long)perf->max_cells, (unsigned long)perf->max_line_tests,
-           (unsigned long)perf->render_counts.surface_limit_pixels);
+           (unsigned long)perf->render_counts.surface_limit_pixels,
+           (unsigned long)perf->render_counts.ray_us, (unsigned long)perf->ray_max_us,
+           (unsigned long)perf->render_counts.plane_us, (unsigned long)perf->plane_max_us,
+           (unsigned long)perf->render_counts.wall_us, (unsigned long)perf->wall_max_us,
+           (unsigned long)perf->render_counts.world_texture_pixels,
+           (unsigned long)perf->render_counts.plane_texture_pixels,
+           (unsigned long)perf->render_counts.span_cache_bytes,
+           (unsigned long)perf->span_peak_bytes);
     const uint32_t last_render_us = perf->last_render_us;
     const unsigned total_frames = perf->total_frames;
     memset(perf, 0, sizeof(*perf));
@@ -196,17 +208,18 @@ static void doom_game_task(void *unused) {
     printf("DOOMG_BOOT phase=framebuffer ms=%lu pixels=%u\n",
            (unsigned long)ll_get_time_ms(), (unsigned)GAME_PIXELS);
     DoomLiteGame_SetClock(ll_get_time_us);
+    DoomLite_SetRenderClock(ll_get_time_us);
     const uint32_t init_start_us = ll_get_time_us();
     DoomLiteGame_Init(&game_state);
     printf("DOOMG_BOOT phase=game_init ms=%lu duration_us=%lu level=1 state_bytes=%u render_bytes=%u "
-           "x=%ld y=%ld hp=%u ammo=%u enemies=%u\n",
+           "x=%ld y=%ld hp=%u ammo=%u enemies=%u world_bytes=%u\n",
            (unsigned long)ll_get_time_ms(),
            (unsigned long)(ll_get_time_us() - init_start_us),
            (unsigned)sizeof(game_state),
            DoomLite_RenderWorkingSetBytes(),
            (long)(game_state.x_q8 >> 8), (long)(game_state.y_q8 >> 8),
            (unsigned)game_state.health, (unsigned)game_state.ammo,
-           (unsigned)game_state.total_enemies);
+           (unsigned)game_state.total_enemies, DoomLite_WorldReadonlyBytes());
 
     while (ll_vm_check_key() >> 16) vTaskDelay(pdMS_TO_TICKS(20));
     printf("DOOMG_BOOT phase=ready ms=%lu\n",
@@ -369,6 +382,14 @@ static void doom_game_task(void *unused) {
             perf.render_counts.sprite_pixels += stats->sprite_pixels;
             perf.render_counts.surface_limit_hits += stats->surface_limit_hits;
             perf.render_counts.surface_limit_pixels += stats->surface_limit_pixels;
+            record_time(stats->ray_us, &perf.render_counts.ray_us, &perf.ray_max_us);
+            record_time(stats->plane_us, &perf.render_counts.plane_us, &perf.plane_max_us);
+            record_time(stats->wall_us, &perf.render_counts.wall_us, &perf.wall_max_us);
+            perf.render_counts.world_texture_pixels += stats->world_texture_pixels;
+            perf.render_counts.plane_texture_pixels += stats->plane_texture_pixels;
+            perf.render_counts.span_cache_bytes += stats->span_cache_bytes;
+            if (stats->span_cache_bytes > perf.span_peak_bytes)
+                perf.span_peak_bytes = stats->span_cache_bytes;
             if (stats->cells > perf.max_cells) perf.max_cells = stats->cells;
             if (stats->line_tests > perf.max_line_tests)
                 perf.max_line_tests = stats->line_tests;

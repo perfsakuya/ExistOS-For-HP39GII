@@ -58,17 +58,6 @@ static void draw_text(uint8_t *pixels, unsigned x, unsigned y,
     draw_text_color(pixels, x, y, message, scale, 16u);
 }
 
-static void draw_number(uint8_t *pixels, unsigned x, unsigned y,
-                        unsigned number, unsigned places, unsigned scale) {
-    unsigned divisor = places == 3u ? 100u : places == 2u ? 10u : 1u;
-    while (places--) {
-        const char digit[2] = {(char)('0' + (number / divisor) % 10u), 0};
-        draw_text(pixels, x, y, digit, scale);
-        x += 4u * scale;
-        divisor /= 10u;
-    }
-}
-
 static void draw_end_panel(uint8_t *pixels, const char *title,
                            unsigned title_x, const char *action) {
     const unsigned left = 48u, top = 32u, width = 160u, height = 60u;
@@ -80,24 +69,6 @@ static void draw_end_panel(uint8_t *pixels, const char *title,
     draw_text(pixels, title_x, 41u, title, 2u);
     draw_text(pixels, 96u, 59u, action, 2u);
     draw_text(pixels, 100u, 77u, "F6 EXIT", 2u);
-}
-
-static void draw_map_hud(uint8_t *pixels, const DoomLiteGame *game,
-                         unsigned map_zoom) {
-    memset(pixels, 237, DOOM_GAME_HUD_HEIGHT * DOOM_GAME_LCD_W);
-    draw_text(pixels, 2u, 3u, game->map ? game->map->name : "E1M1", 2u);
-    draw_text(pixels, 42u, 3u, "HP", 2u);
-    draw_number(pixels, 62u, 3u, game->health, 3u, 2u);
-    draw_text(pixels, 92u, 3u, "AM", 2u);
-    draw_number(pixels, 112u, 3u, game->ammo, 3u, 2u);
-    draw_text(pixels, 142u, 3u, "K", 2u);
-    draw_number(pixels, 154u, 3u,
-                game->kills > 99u ? 99u : game->kills, 2u, 2u);
-    draw_text_color(pixels, 180u, 3u, "B", 2u, game->blue_key ? 16u : 180u);
-    draw_text_color(pixels, 192u, 3u, "R", 2u, game->red_key ? 16u : 180u);
-    draw_text_color(pixels, 204u, 3u, "Y", 2u, game->yellow_key ? 16u : 180u);
-    if (map_zoom)
-        draw_text(pixels, 224u, 3u, map_zoom == 1u ? "1X" : "2X", 2u);
 }
 
 static void draw_patch(uint8_t *pixels, const E1M1UiPatch *patch,
@@ -131,7 +102,8 @@ static void draw_patch_number(uint8_t *pixels, unsigned right, unsigned y,
     } while (value);
 }
 
-static void draw_status_bar(uint8_t *pixels, const DoomLiteGame *game) {
+static void draw_status_bar(uint8_t *pixels, const DoomLiteGame *game,
+                            unsigned map_zoom) {
     const unsigned top = DOOM_GAME_VIEW_H;
     memset(pixels + top * DOOM_GAME_LCD_W, 237,
            DOOM_GAME_STATUS_HEIGHT * DOOM_GAME_LCD_W);
@@ -139,7 +111,15 @@ static void draw_status_bar(uint8_t *pixels, const DoomLiteGame *game) {
     draw_patch_number(pixels, 34u, top + 4u, game->ammo, 0);
     draw_patch_number(pixels, 71u, top + 4u, game->health, 0);
     draw_patch(pixels, &ui_sttprcnt, 72, (int)top + 4, DOOM_GAME_LCD_H);
-    draw_patch_number(pixels, 111u, top + 4u,
+    /* A compact level/contrast (or map zoom) row fits above the kill count,
+     * keeping every top scene row available for the world. */
+    for (unsigned y = top + 1u; y < top + 6u; ++y)
+        memset(pixels + y * DOOM_GAME_LCD_W + 85u, 237, 28u);
+    draw_text(pixels, 85u, top + 1u, game->map ? game->map->name : "E1M1", 1u);
+    const char contrast[3] = {'C', (char)('1' + game->contrast), 0};
+    draw_text(pixels, 105u, top + 1u,
+              map_zoom ? (map_zoom == 1u ? "1X" : "2X") : contrast, 1u);
+    draw_patch_number(pixels, 111u, top + 6u,
                        game->kills > 99u ? 99u : game->kills, 0);
     const unsigned pain = (100u - (game->health > 100u ? 100u : game->health)) * 5u / 101u;
     const E1M1UiPatch *face = ui_faces[game->health ? pain : 5u];
@@ -184,21 +164,14 @@ void DoomLite_DrawGameWeapon(uint8_t *pixels, const DoomLiteGame *game) {
 void DoomLite_DrawGameHud(uint8_t *pixels, const DoomLiteGame *game,
                           const char *message, unsigned map_zoom) {
     if (!pixels || !game) return;
-    if (map_zoom) draw_map_hud(pixels, game, map_zoom);
-    else {
-        draw_status_bar(pixels, game);
-        const char *map_name = game->map ? game->map->name : "E1M1";
-        for (unsigned y = 0u; y < 8u; ++y)
-            memset(pixels + y * DOOM_GAME_LCD_W + 216u, 237u, 40u);
-        draw_text(pixels, 218u, 1u, map_name, 1u);
-        const char contrast[3] = {'C', (char)('1' + game->contrast), 0};
-        draw_text(pixels, 242u, 1u, contrast, 1u);
-    }
+    draw_status_bar(pixels, game, map_zoom);
     if (message) {
-        const unsigned y = map_zoom ? DOOM_GAME_LCD_H - DOOM_GAME_HUD_HEIGHT : 0u;
-        memset(pixels + y * DOOM_GAME_LCD_W, 237,
-               DOOM_GAME_HUD_HEIGHT * DOOM_GAME_LCD_W);
-        draw_text(pixels, 4u, y + 3u, message, 2u);
+        /* Brief events replace only the three left labels. Counters, face,
+         * armor, keys and ammunition remain visible; no world row is covered. */
+        const unsigned y = DOOM_GAME_VIEW_H + 19u;
+        for (unsigned row = y; row < DOOM_GAME_LCD_H; ++row)
+            memset(pixels + row * DOOM_GAME_LCD_W, 237, 116u);
+        draw_text(pixels, 4u, y + 1u, message, 1u);
     }
     if (game->completed) {
         const char *title = game->map_index ? "E1M2 CLEAR" : "E1M1 CLEAR";

@@ -65,6 +65,7 @@
 <div class="events"><span id="gamestate">Game 状态 —</span><span id="gamedrops">Game 跳过的逻辑 tic —</span></div>
 <div class="events"><span id="gamepool">Game 固定容量 —</span><span id="gamerays">Game 射线工作量 —</span></div>
 <div class="events"><span id="gamefixed">Game 固定内存 —</span></div>
+<div class="events"><span id="gameworldray">射线几何 —</span><span id="gameworldplane">地面／天花板 —</span><span id="gameworldwall">墙面贴图 —</span></div>
 <div class="events"><span id="logic">游戏逻辑 —</span><span id="draw">绘制含显示 —</span><span id="convert">灰度转换 —</span><span id="display">显示提交 —</span><span id="other">引擎及其他 —</span></div>
 <div class="events"><span id="setup">视角准备 —</span><span id="bsp">墙面/BSP —</span><span id="planes">地板/天花板 —</span><span id="masked">精灵/遮挡 —</span></div>
 <div class="events" aria-live="polite"><span id="stage">等待启动</span><span id="starts">启动 0</span><span id="zone">交换区校验 0</span><span id="frames">最新帧 0</span><span id="exits">退出 0</span><span id="errors">错误 0</span><span id="panics">Panic 0</span></div>
@@ -116,12 +117,17 @@ async function refresh() {
       ? `E1M${s.game.level} · HP ${s.game.health ?? '—'} · 护甲 ${s.game.armor ?? '—'} · 弹药 ${s.game.ammo ?? '—'} · 击杀 ${s.game.kills ?? '—'} · 钥匙 B/R/Y ${[s.game.blue_key, s.game.red_key, s.game.yellow_key].map(v => v == null ? '—' : v ? '有' : '无').join('/')} · 对比度 C${s.game.contrast ?? '—'}`
       : 'Game 状态 —';
     const counters = s.game_detail?.raw;
+    for (const [phase, label] of [['ray','射线几何'], ['plane','地面／天花板'], ['wall','墙面贴图']]) {
+      byId(`gameworld${phase}`).textContent = s.game_detail?.[`${phase}_ms`] != null
+        ? `${label} 均 ${s.game_detail[`${phase}_ms`]} / 峰 ${s.game_detail[`${phase}_max_ms`]} ms/帧`
+        : `${label} —`;
+    }
     byId('gamefixed').textContent = s.game_resources
-      ? `固定状态 ${s.game_resources.state_kb} KB · 固定渲染缓存 ${s.game_resources.render_kb} KB · 共用 LCD 帧缓冲（不计入 malloc 曲线）` : 'Game 固定内存 —';
+      ? `固定状态 ${s.game_resources.state_kb} KB · 固定渲染缓存 ${s.game_resources.render_kb} KB · 世界只读资源 ${s.game_world_kb ?? '—'} KB · 共用 LCD 帧缓冲（不计入 malloc 曲线）` : 'Game 固定内存 —';
     byId('gamepool').textContent = counters
       ? `怪物峰值 ${counters.actor_peak ?? '—'}/128 · 门/平台峰值 ${counters.mover_peak ?? '—'}/64 · 溢出 ${counters.overflows ?? '—'}` : 'Game 固定容量 —';
     byId('gamerays').textContent = counters && counters.frames
-      ? `每帧 cell ${(counters.cells / counters.frames).toFixed(0)} · 边界测试 ${(counters.line_tests / counters.frames).toFixed(0)} · 绘制跨度溢出 ${counters.surface_limits ?? '—'}` : 'Game 射线工作量 —';
+      ? `每帧 cell ${(counters.cells / counters.frames).toFixed(0)} · 边界测试 ${(counters.line_tests / counters.frames).toFixed(0)} · 绘制跨度溢出 ${counters.surface_limits ?? '—'} · 有效跨度均 ${s.game_detail.span_active_kb ?? '—'} / 峰 ${s.game_detail.span_peak_kb ?? '—'} KB` : 'Game 射线工作量 —';
     byId('gamedrops').textContent = `Game 跳过的逻辑 tic ${s.game?.dropped_ticks ?? '—'}`;
     byId('fastgame').textContent = s.fast
       ? `混合版 HP ${s.fast.health ?? '—'} · 击杀 ${s.fast.kills ?? '—'} · 蓝钥匙 ${s.fast.blue_key == null ? '—' : s.fast.blue_key ? '有' : '无'} · 地图 ${s.fast.map == null ? '—' : s.fast.map ? '开' : '关'}`

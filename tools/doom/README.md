@@ -6,7 +6,10 @@
 IWAD or linking the legacy GBADoom engine. `build_game_maps.py` emits
 immutable geometry/BSP/sparse collision/tag/neighbor tables;
 `build_game_sprites.py` emits 69 packed grayscale patches for actor animation
-and pickups. Both verify the pinned IWAD hash and support `--check`.
+and pickups. `build_game_world.py` composes the original PNAMES/TEXTURE1/2
+patches and flats into 198 wall and 87 plane materials. It preserves sidedef
+offsets, both line sides, original texture dimensions and sector assignments.
+All three generators verify the pinned IWAD hash and support `--check`.
 They default to `../Freedoom-research/extracted/freedoom-0.13.0/freedoom1.wad`.
 The normal ARM build uses the generated headers and does not need the IWAD.
 
@@ -19,6 +22,24 @@ under `build/game-validation/`. It never opens or flashes a calculator.
 See [the two-map candidate report](../../docs/doom-game-e1m1-e1m2.md) for
 controls, approximate rules, profiling, memory and hardware test gaps.
 Keep `doom_port/data/COPYING.txt` and `CREDITS.txt` with redistributed assets.
+
+World pixels are 32x32, column-major packed 4-bit grayscale. Wall tiers keep
+full vertical screen resolution; floors/ceilings use 2x2 screen samples and a
+256-byte row cache. `DOOM_GAME_FULL_PLANE_DETAIL` retains the one-row plane
+baseline for host comparisons. Plane projection currently uses the player's
+sector, not Doom visplanes. Transparent two-sided middles keep the wall and
+sprite visible through their holes; no decoded texture heap is allocated.
+Foreground sector floor/ceiling intervals also hide actors behind platforms;
+sky ceilings do not create an opaque cover. The fixed cache holds 32 spans per
+ray (49,536 bytes including counts and starts), with no dynamic expansion. Only
+the current frame's effective spans occupy the contiguous active prefix; unused
+tail slots are not touched. `DOOMG_DETAIL` reports its mean and peak byte usage.
+This reduces touched pages, not the reserved BSS size. Plane color
+sampling still uses the player's sector rather than full per-sector visplanes.
+Game overlays live in the classic bottom bar; the map uses scene rows 0..100.
+The calculator's separate hardware indicator strip is not a normal viewport.
+`DOOMG_DETAIL` includes disjoint ray/plane/wall timings and maxima, alongside
+the existing logical profiles; the serial dashboard accepts old packets too.
 
 ## Community ports and expansion audit
 

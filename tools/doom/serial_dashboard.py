@@ -330,7 +330,21 @@ def state():
             "state_kb": round(fields(line)["state_bytes"] / 1024, 2),
             "render_kb": round(fields(line)["render_bytes"] / 1024, 2),
         } for line in reversed(game_boot) if "state_bytes=" in line and "render_bytes=" in line), None),
+        "game_world_kb": next((round(fields(line)["world_bytes"] / 1024, 2)
+                               for line in reversed(game_boot) if "world_bytes=" in line), None),
         "game_detail": {
+            "span_active_kb": round(game_detail["span_total_bytes"] /
+                                    (game_detail["frames"] * 1024), 2)
+                if game_detail.get("frames") and "span_total_bytes" in game_detail else None,
+            "span_peak_kb": round(game_detail["span_peak_bytes"] / 1024, 2)
+                if "span_peak_bytes" in game_detail else None,
+            **{f"{phase}_ms": round(game_detail[f"{phase}_total_us"] /
+                                     (game_detail["frames"] * 1000), 3)
+               if game_detail.get("frames") and f"{phase}_total_us" in game_detail else None
+               for phase in ("ray", "plane", "wall")},
+            **{f"{phase}_max_ms": round(game_detail[f"{phase}_max_us"] / 1000, 3)
+               if f"{phase}_max_us" in game_detail else None
+               for phase in ("ray", "plane", "wall")},
             **{f"{phase}_ms": round(game_detail[f"{phase}_total_us"] /
                                      (game_detail["tics"] * 1000), 3)
                if game_detail.get("tics") and f"{phase}_total_us" in game_detail else None

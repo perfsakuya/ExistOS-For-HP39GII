@@ -54,10 +54,12 @@ static void save_preview(const char *directory, unsigned level, unsigned contras
 }
 int main(int argc, char **argv) {
     DoomLiteGame_SetClock(clock_us);
+    DoomLite_SetRenderClock(clock_us);
     memset(guarded, 0xa5, sizeof(guarded));
     const char *directory = argc > 1 ? argv[1] : NULL;
-    printf("BENCH_META host_only=1 state_bytes=%zu actor_bytes=%zu mover_bytes=%zu samples=%u\n",
-           sizeof(game), sizeof(DoomLiteActor), sizeof(DoomLiteMover), SAMPLES);
+    printf("BENCH_META host_only=1 state_bytes=%zu actor_bytes=%zu mover_bytes=%zu samples=%u render_bytes=%u world_bytes=%u\n",
+           sizeof(game), sizeof(DoomLiteActor), sizeof(DoomLiteMover), SAMPLES,
+           DoomLite_RenderWorkingSetBytes(), DoomLite_WorldReadonlyBytes());
     for (unsigned level = 0; level < DOOM_MAP_COUNT; ++level) {
         for (unsigned mode = 0; mode < 4u; ++mode) {
             if (mode == 3u && level != 0u) continue;
@@ -67,6 +69,9 @@ int main(int argc, char **argv) {
                     game.actors[a].flags |= DL_ACTOR_AWAKE;
             uint64_t sums[4] = {0}, maxima[4] = {0};
             uint64_t cells = 0, lines = 0, sprite_pixels = 0;
+            uint64_t ray_us = 0, plane_us = 0, wall_us = 0, world_pixels = 0;
+            uint64_t active_span_bytes = 0;
+            uint32_t peak_span_bytes = 0;
             uint32_t max_cells = 0, max_lines = 0, limits = 0, limit_pixels = 0, checksum = 0;
             for (unsigned frame = 0; frame < SAMPLES; ++frame) {
                 if (mode == 1u && game.actor_count) {
@@ -101,6 +106,10 @@ int main(int argc, char **argv) {
                     if (times[p] > maxima[p]) maxima[p] = times[p];
                 }
                 const DoomLiteRenderStats *stats = DoomLite_GetRenderStats();
+                ray_us += stats->ray_us; plane_us += stats->plane_us;
+                wall_us += stats->wall_us; world_pixels += stats->world_texture_pixels;
+                active_span_bytes += stats->span_cache_bytes;
+                if (stats->span_cache_bytes > peak_span_bytes) peak_span_bytes = stats->span_cache_bytes;
                 cells += stats->cells; lines += stats->line_tests;
                 sprite_pixels += stats->sprite_pixels; limits += stats->surface_limit_hits;
                 limit_pixels += stats->surface_limit_pixels;
@@ -114,13 +123,18 @@ int main(int argc, char **argv) {
                    " sprite_avg_us=%.3f sprite_max_us=%" PRIu64
                    " ui_avg_us=%.3f ui_max_us=%" PRIu64
                    " cells_avg=%" PRIu64 " cells_max=%u lines_avg=%" PRIu64 " lines_max=%u"
-                   " sprite_pixels_avg=%" PRIu64 " surface_limits=%u surface_limit_pixels=%u pool_overflows=%lu checksum=%u\n",
+                   " sprite_pixels_avg=%" PRIu64 " surface_limits=%u surface_limit_pixels=%u pool_overflows=%lu checksum=%u"
+                   " ray_avg_us=%.3f plane_avg_us=%.3f wall_avg_us=%.3f world_pixels_avg=%" PRIu64
+                   " span_avg_bytes=%" PRIu64 " span_peak_bytes=%u\n",
                    level + 1u, mode, (unsigned)game.actor_count,
                    (double)sums[0]/SAMPLES, maxima[0], (double)sums[1]/SAMPLES, maxima[1],
                    (double)sums[2]/SAMPLES, maxima[2], (double)sums[3]/SAMPLES, maxima[3],
                    cells/SAMPLES, max_cells, lines/SAMPLES, max_lines,
                    sprite_pixels/SAMPLES, limits, limit_pixels,
-                   (unsigned long)game.metrics.pool_overflows, checksum);
+                   (unsigned long)game.metrics.pool_overflows, checksum,
+                   (double)ray_us/SAMPLES, (double)plane_us/SAMPLES,
+                   (double)wall_us/SAMPLES, world_pixels/SAMPLES,
+                   active_span_bytes/SAMPLES, peak_span_bytes);
             assert(!game.metrics.pool_overflows);
         }
         for (unsigned contrast = 0; contrast < 3u; ++contrast) {

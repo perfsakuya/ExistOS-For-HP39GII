@@ -4,12 +4,11 @@
 
 #define DOOM_GAME_LCD_W 256u
 #define DOOM_GAME_LCD_H 127u
-#define DOOM_GAME_HUD_HEIGHT 16u
 #define DOOM_GAME_STATUS_HEIGHT 26u
 #define DOOM_GAME_VIEW_H (DOOM_GAME_LCD_H - DOOM_GAME_STATUS_HEIGHT)
 
-/* The 3D view uses a classic bottom status bar. The map retains the large
- * top row so its overview and objective markers stay readable. */
+/* The scene and map share the classic bottom status bar. Normal HUD and
+ * event messages never cover view rows; end-of-level/death panels do. */
 void DoomLite_DrawGameHud(uint8_t *pixels, const DoomLiteGame *game,
                           const char *message, unsigned map_zoom);
 

@@ -215,7 +215,7 @@ class DashboardStateTest(unittest.TestCase):
 
     def test_two_levels_details_and_packet_boundaries(self):
         boot = ("DOOMG_BOOT phase=task_start ms=1000\n"
-                "DOOMG_BOOT phase=game_init state_bytes=7220 render_bytes=9381\n")
+                "DOOMG_BOOT phase=game_init state_bytes=7220 render_bytes=9381 world_bytes=218116\n")
         perf = (
             "DOOMG_PERF frames=32 elapsed_ms=1600 logic_ticks=56 "
             "logic_total_ms=112 logic_max_ms=4 render_total_ms=800 render_max_ms=30 "
@@ -227,13 +227,17 @@ class DashboardStateTest(unittest.TestCase):
             "DOOMG_DETAIL frames=32 tics=56 level=2 ai_total_us=56000 ai_max_us=2300 "
             "anim_total_us=11200 anim_max_us=260 mover_total_us=2800 mover_max_us=200 "
             "collision_total_us=5600 collision_max_us=300 los_total_us=8400 los_max_us=700 "
-            "cells=128000 line_tests=96000 actor_peak=93 mover_peak=1 overflows=0\n"
+            "cells=128000 line_tests=96000 actor_peak=93 mover_peak=1 overflows=0 "
+            "ray_total_us=320000 ray_max_us=13000 plane_total_us=96000 plane_max_us=4500 "
+            "wall_total_us=160000 wall_max_us=6600 world_pixels=256000 plane_pixels=64000 "
+            "span_total_bytes=262144 span_peak_bytes=12288\n"
         )
         s = self.read(boot + perf + detail)
         self.assertEqual(s["stage"], "E1M2 Game 运行中")
         self.assertEqual(s["game"]["level"], 2)
         self.assertEqual(s["starts"], 1)
         self.assertEqual(s["game_resources"], {"state_kb": 7.05, "render_kb": 9.16})
+        self.assertEqual(s["game_world_kb"], 213.0)
         self.assertEqual(s["latest_frame"], 96)
         self.assertEqual(s["game"]["armor"], 100)
         self.assertTrue(s["game"]["red_key"])
@@ -243,6 +247,16 @@ class DashboardStateTest(unittest.TestCase):
         self.assertEqual(s["game_detail"]["ai_max_ms"], 2.3)
         self.assertEqual(s["game_detail"]["los_ms"], 0.15)
         self.assertEqual(s["game_detail"]["raw"]["actor_peak"], 93)
+        self.assertEqual(s["game_detail"]["ray_ms"], 10)
+        self.assertEqual(s["game_detail"]["plane_ms"], 3)
+        self.assertEqual(s["game_detail"]["wall_ms"], 5)
+        self.assertEqual(s["game_detail"]["ray_max_ms"], 13)
+        self.assertEqual(s["game_detail"]["span_active_kb"], 8)
+        self.assertEqual(s["game_detail"]["span_peak_kb"], 12)
+        legacy_detail = detail.replace(" span_total_bytes=262144 span_peak_bytes=12288", "")
+        legacy = self.read(boot + perf + legacy_detail)
+        self.assertIsNone(legacy["game_detail"]["span_active_kb"])
+        self.assertIsNone(legacy["game_detail"]["span_peak_kb"])
         s = self.read(boot + perf + detail + perf)
         self.assertIsNone(s["game_detail"])  # Do not reuse a prior batch's timing.
         s = self.read(boot + perf + detail + "DOOMG_BOOT phase=map_load level=1 duration_us=150\n")

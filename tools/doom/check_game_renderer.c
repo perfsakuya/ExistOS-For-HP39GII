@@ -28,22 +28,50 @@ static void guard(const uint8_t *frame) {
         assert(frame[16u + LCD_PIX_W * LCD_PIX_H + i] == 0xa5u);
     }
 }
+static void check_packing(void) {
+    unsigned cursor = 0u;
+    for (unsigned ray = 0u; ray < LITE_RAYS; ++ray) {
+        assert(game_span_first[ray] == cursor);
+        assert(game_span_count[ray] <= GAME_RAY_SPANS);
+        cursor += game_span_count[ray];
+        assert(cursor <= LITE_RAYS * GAME_RAY_SPANS);
+    }
+    assert(game_render_stats.surfaces == cursor);
+    assert(game_render_stats.span_cache_bytes == cursor * sizeof(GameWallSpan));
+}
+static void check_unused_span_tail(uint8_t *frame, const DoomLiteGame *game) {
+    memset(frame, 0xa5, LCD_PIX_W * LCD_PIX_H + 32u);
+    DoomLite_RenderGameScene(frame + 16u, game);
+    check_packing();
+    const uint32_t before = frame_hash(frame + 16u);
+    const unsigned active = game_render_stats.span_cache_bytes / sizeof(GameWallSpan);
+    assert(active < LITE_RAYS * GAME_RAY_SPANS);
+    uint8_t *tail = (uint8_t *)&game_spans[active];
+    const unsigned unused = (unsigned)sizeof(game_spans) - game_render_stats.span_cache_bytes;
+    memset(tail, 0xa7, unused);
+    DoomLite_RenderGameScene(frame + 16u, game);
+    check_packing();
+    assert(game_render_stats.span_cache_bytes == active * sizeof(GameWallSpan));
+    assert(frame_hash(frame + 16u) == before);
+    for (unsigned i = 0u; i < unused; ++i) assert(tail[i] == 0xa7u);
+    guard(frame);
+}
 static void check_tile_pixels(const uint8_t *pixels, const DoomLiteGame *game) {
     uint8_t reference[DOOM_GAME_VIEW_H * LCD_PIX_W];
     for (unsigned y = 0; y < DOOM_GAME_VIEW_H; ++y) {
-        const uint8_t background = y < DOOM_GAME_VIEW_H / 2u
-            ? (uint8_t)(237u - y / 7u) : (uint8_t)(205u + y / 10u);
+        game_background_row(reference + y * LCD_PIX_W, y, game,
+                            DoomLiteGame_PlayerSector(game));
         for (unsigned ray = 0; ray < LITE_RAYS; ++ray) {
-            uint8_t color = background;
             for (unsigned i = 0; i < game_span_count[ray]; ++i) {
-                const GameWallSpan *span = &game_spans[ray][i];
-                if (y >= span->top && y < span->bottom) {
-                    color = game_span_gray(span, y); break;
+                const GameWallSpan *span = &game_spans[game_span_first[ray] + (i)];
+                if (span->color == GAME_WALL_PLANE) continue;
+                if (y >= span->top && y < span->bottom && game_span_opaque(span, y)) {
+                    const uint8_t color = game_gray(game_span_gray(span, y), game->contrast);
+                    reference[y * LCD_PIX_W + ray * 2u] = color;
+                    reference[y * LCD_PIX_W + ray * 2u + 1u] = color;
+                    break;
                 }
             }
-            color = game_gray(color, game->contrast);
-            reference[y * LCD_PIX_W + ray * 2u] = color;
-            reference[y * LCD_PIX_W + ray * 2u + 1u] = color;
         }
     }
     reference[(DOOM_GAME_VIEW_H / 2u) * LITE_W + LITE_W / 2u] = 12u;
@@ -55,6 +83,7 @@ static void checked_frame(uint8_t *frame, DoomLiteGame *game, int map) {
     if (map) DoomLite_RenderGameMap(frame + 16u, game, (unsigned)map);
     else {
         DoomLite_RenderGameScene(frame + 16u, game);
+        check_packing();
         check_tile_pixels(frame + 16u, game);
         for (unsigned i = DOOM_GAME_VIEW_H * LCD_PIX_W;
              i < LCD_PIX_W * LCD_PIX_H; ++i) assert(frame[16u + i] == 0xa5u);
@@ -162,8 +191,9 @@ static void check_actor_frames(uint8_t *frame, const char *directory) {
         assert(walk_hash != corpse_hash);
         /* A full-height opaque wall must hide the actor including corpse. */
         for (unsigned ray = 0; ray < LITE_RAYS; ++ray) {
+            game_span_first[ray] = (uint16_t)ray;
             game_span_count[ray] = 1u;
-            game_spans[ray][0] = (GameWallSpan){8u, 0u, DOOM_GAME_VIEW_H, 0u, 0u};
+            game_spans[game_span_first[ray] + (0)] = (GameWallSpan){.depth=8u, .top=0u, .bottom=DOOM_GAME_VIEW_H};
         }
         memset(frame + 16u, 237, LCD_PIX_W * LCD_PIX_H);
         DoomLite_RenderGameThings(frame + 16u, &game);
@@ -180,10 +210,11 @@ static void check_sparse_ray_reference(void) {
         assert(DoomLiteGame_InitMap(&game, map));
         /* Flatten all sectors so every two-sided line is a pure portal.
          * The exact all-linedef reference then independently locates the
-         * nearest terminal wall without cell/ref/BSP traversal shortcuts. */
+         * nearest terminal wall without cell/ref/BSP traversal shortcuts.
+         * The separate platform check covers actual stepped plane clipping. */
         for (unsigned i = 0; i < game.map->sector_count; ++i) {
             game.sector_state[i].floor = 0;
-            game.sector_state[i].ceiling = 128;
+            game.sector_state[i].ceiling = 256;
         }
         for (unsigned origin = 0; origin < 6u; ++origin) {
             if (origin) {
@@ -331,7 +362,8 @@ static void check_switch_signs(uint8_t *frame, const char *directory) {
     /* Letter padding must keep the foreground detached from the border.
      * The projected glyph also stays the same when a tall wall is clipped. */
     const unsigned f2[5] = {0x77u,0x41u,0x67u,0x44u,0x47u};
-    GameWallSpan sample = {64u,0u,DOOM_GAME_VIEW_H,GAME_WALL_SWITCH,128u};
+    GameWallSpan sample = {.depth=64u, .top=0u, .bottom=DOOM_GAME_VIEW_H,
+                           .color=GAME_WALL_SWITCH, .u=128u};
     for (unsigned row = 0u; row < 5u; ++row) {
         for (unsigned column = 0u; column < 7u; ++column) {
             sample.u = (uint8_t)(80u + (column * 2u + 1u) * 96u / 14u);
@@ -369,7 +401,7 @@ static void check_switch_signs(uint8_t *frame, const char *directory) {
             checked_frame(frame, &game, 0);
             for (unsigned ray = 0u; ray < LITE_RAYS; ++ray)
                 for (unsigned span = 0u; span < game_span_count[ray]; ++span)
-                    marked += game_spans[ray][span].color == (test == 3u ? GAME_WALL_EXIT : GAME_WALL_SWITCH);
+                    marked += game_spans[game_span_first[ray] + (span)].color == (test == 3u ? GAME_WALL_EXIT : GAME_WALL_SWITCH);
         }
         assert(marked);
         const uint32_t active_hash = frame_hash(frame + 16u);
@@ -400,6 +432,7 @@ int main(int argc, char **argv) {
         DoomLiteGame game;
         assert(DoomLiteGame_InitMap(&game, map));
         uint8_t lite_before[LCD_PIX_W * LCD_PIX_H];
+        check_unused_span_tail(frame, &game);
         DoomLite_RenderFrame(lite_before, E1M1_START_X * 256, E1M1_START_Y * 256, 0u, 0);
         uint32_t contrast_hash[3];
         for (unsigned contrast = 0; contrast < 3u; ++contrast) {
@@ -412,14 +445,19 @@ int main(int argc, char **argv) {
         }
         assert(contrast_hash[0] != contrast_hash[1] && contrast_hash[1] != contrast_hash[2]);
         game.contrast = 1u;
+        unsigned spawn_limits = 0u, spawn_limit_pixels = 0u;
         for (unsigned facing = 0; facing < 256u; facing += 4u) {
             game.facing = (uint8_t)facing;
             checked_frame(frame, &game, 0);
+            spawn_limits += DoomLite_GetRenderStats()->surface_limit_hits;
+            spawn_limit_pixels += DoomLite_GetRenderStats()->surface_limit_pixels;
             if (DoomLite_GetRenderStats()->surface_limit_hits && directory) {
                 char name[64]; snprintf(name, sizeof(name), "e1m%u-limit-facing-%u", map + 1u, facing);
                 preview(directory, name, frame);
             }
         }
+        printf("GAME_RENDER_SPAWN level=%u headings=64 surface_limit_hits=%u surface_limit_pixels=%u\n",
+               map + 1u, spawn_limits, spawn_limit_pixels);
         game.facing = (uint8_t)(game.map->start_angle * 256u / 360u);
         for (unsigned zoom = 1u; zoom <= 2u; ++zoom) {
             checked_frame(frame, &game, (int)zoom);
@@ -442,6 +480,9 @@ int main(int argc, char **argv) {
     }
     check_doors(frame, directory);
     check_actor_frames(frame, directory);
+    printf("GAME_RENDER_CACHE frames=%u surface_limit_frames=%u surface_limit_hits=%u surface_limit_pixels=%u max_limit_pixels=%u span_bss=%u\n",
+           frames_checked, surface_limit_frames, total_limit_hits, total_limit_pixels,
+           max_limit_pixels, (unsigned)(sizeof(game_spans) + sizeof(game_span_first) + sizeof(game_span_count)));
     check_sparse_ray_reference();
     check_items_and_spectre(frame, directory);
     check_axis_intersections();
@@ -452,6 +493,6 @@ int main(int argc, char **argv) {
            (unsigned long long)total_cells, (unsigned long long)total_surfaces,
            max_line_tests, max_cells, max_surfaces, surface_limit_frames,
            total_limit_hits, total_limit_pixels, max_limit_pixels,
-           (unsigned)(sizeof(game_spans) + sizeof(game_span_count)), GAME_SPRITE_BYTES);
+           (unsigned)(sizeof(game_spans) + sizeof(game_span_first) + sizeof(game_span_count)), GAME_SPRITE_BYTES);
     return 0;
 }

@@ -2,9 +2,10 @@
  * native ray. A bounded interval list replaces a full per-pixel Z buffer. */
 #include "GameSprites.h"
 #include "DoomMap.h"
+#include "GameWorldTextures.h"
 
 #ifndef GAME_RAY_SPANS
-#define GAME_RAY_SPANS 12u
+#define GAME_RAY_SPANS 32u /* Walls plus foreground floor/ceiling depth strips. */
 #endif
 #define GAME_VERTICAL_PROJECTION 128
 #define GAME_RAY_MAX_BOUNDARIES 48u
@@ -12,22 +13,53 @@
 #define GAME_WALL_SWITCH 254u
 #define GAME_WALL_EXIT 253u
 #define GAME_WALL_USED_SWITCH 252u
+#define GAME_WALL_MASKED 251u
+#define GAME_WALL_PLANE 250u /* Depth-only floor/ceiling cover; background owns its pixels. */
 
 typedef struct {
     uint16_t depth;
     uint8_t top, bottom, color, u;
+    uint8_t texture, texture_u;
+    uint16_t texture_v, texture_step; /* Wrapped 32-pixel column, Q8. */
 } GameWallSpan;
 
-static GameWallSpan game_spans[LITE_RAYS][GAME_RAY_SPANS];
+/* Keep the same bounded capacity, but touch only this frame's contiguous
+ * prefix. A 384-byte per-ray stride otherwise spreads even one span/ray
+ * across 48 KiB, exceeding the Loader's 40 KiB writable page cache. */
+static GameWallSpan game_spans[LITE_RAYS * GAME_RAY_SPANS];
+static uint16_t game_span_first[LITE_RAYS];
 static uint8_t game_span_count[LITE_RAYS];
 static DoomLiteRenderStats game_render_stats;
+static uint32_t (*game_render_clock)(void);
+#ifndef DOOM_GAME_FULL_PLANE_DETAIL
+static uint8_t game_plane_row[LITE_W];
+#endif
+
+void DoomLite_SetRenderClock(uint32_t (*clock_us)(void)) {
+    game_render_clock = clock_us;
+}
+static uint32_t game_render_now(void) {
+    return game_render_clock ? game_render_clock() : 0u;
+}
 
 const DoomLiteRenderStats *DoomLite_GetRenderStats(void) {
     return &game_render_stats;
 }
+unsigned DoomLite_WorldReadonlyBytes(void) {
+    return (unsigned)(GAME_WORLD_PIXEL_BYTES + sizeof(game_world_gray) +
+        sizeof(game_world_textures) + sizeof(game_world_flats) + sizeof(game_world_maps) +
+        sizeof(game_world_e1m1_sides) + sizeof(game_world_e1m2_sides) +
+        sizeof(game_world_e1m1_lines) + sizeof(game_world_e1m2_lines) +
+        sizeof(game_world_e1m1_sectors) + sizeof(game_world_e1m2_sectors));
+}
 unsigned DoomLite_RenderWorkingSetBytes(void) {
-    return (unsigned)(sizeof(game_spans) + sizeof(game_span_count) +
-                      sizeof(game_render_stats) + sizeof(game_wall_ready));
+    return (unsigned)(sizeof(game_spans) + sizeof(game_span_first) + sizeof(game_span_count) +
+                      sizeof(game_render_stats) + sizeof(game_wall_ready) +
+                      sizeof(game_render_clock)
+#ifndef DOOM_GAME_FULL_PLANE_DETAIL
+                      + sizeof(game_plane_row)
+#endif
+                      );
 }
 
 static uint8_t game_gray(uint8_t color, uint8_t contrast) {
@@ -57,10 +89,140 @@ static void game_add_span(unsigned ray, int top, int bottom, unsigned depth,
     if (top < 0) top = 0;
     if (bottom > (int)DOOM_GAME_VIEW_H) bottom = (int)DOOM_GAME_VIEW_H;
     if (top >= bottom || game_span_count[ray] >= GAME_RAY_SPANS) return;
-    GameWallSpan *span = &game_spans[ray][game_span_count[ray]++];
-    *span = (GameWallSpan){(uint16_t)depth, (uint8_t)top, (uint8_t)bottom,
-                           (uint8_t)color, (uint8_t)u};
+    GameWallSpan *span = &game_spans[game_span_first[ray] + game_span_count[ray]++];
+    *span = (GameWallSpan){.depth = (uint16_t)depth, .top = (uint8_t)top,
+                           .bottom = (uint8_t)bottom, .color = (uint8_t)color,
+                           .u = (uint8_t)u};
     ++game_render_stats.surfaces;
+}
+
+/* A boundary can add several strips before its capacity check. The final
+ * slot then belongs to this boundary, not an earlier near surface. Replace
+ * that slot if necessary and cover the incoming window, including any plane
+ * or wall strip that a full cache rejected. The coarse opaque fallback keeps
+ * later sprites behind the boundary and never retains masked/texture state. */
+static void game_add_fallback(unsigned ray, int top, int bottom, unsigned depth,
+                              unsigned color, unsigned u) {
+    if (top < 0) top = 0;
+    if (bottom > (int)DOOM_GAME_VIEW_H) bottom = (int)DOOM_GAME_VIEW_H;
+    if (top >= bottom) return;
+    if (game_span_count[ray] >= GAME_RAY_SPANS) {
+        game_span_count[ray] = GAME_RAY_SPANS - 1u;
+        --game_render_stats.surfaces; /* Replacement is one cached surface. */
+    }
+    game_add_span(ray, top, bottom, depth, color, u, top, bottom);
+    ++game_render_stats.surface_limit_hits;
+    game_render_stats.surface_limit_pixels += (uint32_t)(bottom - top);
+}
+
+/* Original sidedef alignment, prepared once per visible span. No texture
+ * decompression, modulus or division is done inside the pixel loop. Keeping
+ * V in the unclipped world coordinate prevents near walls from stretching
+ * their entire image into the visible screen fragment. */
+static void game_texture_span(unsigned ray, unsigned before, unsigned texture,
+                              int world_u, int anchor, int eye) {
+    if (game_span_count[ray] == before || texture == 0u ||
+        texture > GAME_WORLD_TEXTURE_COUNT) return;
+    GameWallSpan *span = &game_spans[game_span_first[ray] + (before)];
+    const GameWorldTexture *asset = &game_world_textures[texture];
+    int u = world_u % asset->world_width;
+    if (u < 0) u += asset->world_width;
+    const unsigned depth = span->depth < 12u ? 12u : span->depth;
+    const int v_q8 = (anchor - eye) * 256 +
+        ((int)span->top - (int)DOOM_GAME_VIEW_H / 2) * (int)depth * 2;
+    span->texture = (uint8_t)texture;
+    span->texture_u = (uint8_t)((unsigned)u * 32u / asset->world_width);
+    span->texture_v = (uint16_t)((v_q8 * 32 / asset->world_height) & 8191);
+    span->texture_step = (uint16_t)(depth * 64u / asset->world_height);
+}
+
+static unsigned game_texture_height(unsigned texture) {
+    return texture && texture <= GAME_WORLD_TEXTURE_COUNT
+        ? game_world_textures[texture].world_height : 128u;
+}
+
+static const GameWorldSide *game_world_side(const DoomMap *map, unsigned line,
+                                           unsigned front) {
+    const GameWorldMap *world = &game_world_maps[map->index];
+    if (line >= world->line_count) return NULL;
+    const GameWorldLine *edge = &world->lines[line];
+    const unsigned side = front ? edge->front_side : edge->back_side;
+    return side < world->side_count ? &world->sides[side] : NULL;
+}
+
+static int game_world_u(const DoomMap *map, unsigned index, unsigned front,
+                        int hit_x, int hit_y, const GameWorldSide *side) {
+    const DoomMapLine *line = &map->lines[index];
+    const GameWorldLine *edge = &game_world_maps[map->index].lines[index];
+    const int dx = front ? hit_x - line->x1 : line->x2 - hit_x;
+    const int dy = front ? hit_y - line->y1 : line->y2 - hit_y;
+    return side->x_offset + (dx * edge->tangent_x + dy * edge->tangent_y) / 16384;
+}
+
+static unsigned game_world_code(const GameWorldTexture *asset, unsigned u,
+                                unsigned v) {
+    const unsigned index = (u & 31u) * 32u + (v & 31u);
+    const unsigned packed = asset->pixels[index >> 1];
+    return (index & 1u) ? packed >> 4 : packed & 15u;
+}
+
+/* Plane detail is sampled from the player's current sector. This compact
+ * renderer does not allocate Doom visplanes; neighbouring stepped sectors
+ * retain exact wall clipping but share this background plane projection. */
+static void game_plane_row_detail(uint8_t *row, unsigned y,
+                                  const DoomLiteGame *game, uint16_t sector) {
+    const unsigned horizon = DOOM_GAME_VIEW_H / 2u;
+    const uint8_t background = y < horizon
+        ? (uint8_t)(237u - y / 7u) : (uint8_t)(205u + y / 10u);
+    const GameWorldSector *surface = &game_world_maps[game->map->index].sectors[sector];
+    const unsigned texture = y < horizon ? surface->ceiling : surface->floor;
+    if (texture == 0u || texture == 255u || texture > GAME_WORLD_FLAT_COUNT || y == horizon) {
+        memset(row, game_gray(background, game->contrast), LITE_W);
+        return;
+    }
+    const int floor = DoomLiteGame_FloorHeight(game, sector);
+    const int eye = floor + 41;
+    const int height = y < horizon ? DoomLiteGame_CeilingHeight(game, sector) - eye : eye - floor;
+    const unsigned delta = y < horizon ? horizon - y : y - horizon;
+    if (height <= 0) {
+        memset(row, game_gray(background, game->contrast), LITE_W);
+        return;
+    }
+    unsigned distance_q8 = (unsigned)height * GAME_VERTICAL_PROJECTION * 256u / delta;
+    if (distance_q8 > LITE_MAX_DISTANCE_Q8) distance_q8 = LITE_MAX_DISTANCE_Q8;
+    const int fx = sine_q14((uint8_t)(game->facing + 64u));
+    const int fy = sine_q14(game->facing);
+    const int32_t step_x = (int32_t)(-(int64_t)fy * distance_q8 / (16384 * (LITE_PROJECTION / 2)));
+    const int32_t step_y = (int32_t)((int64_t)fx * distance_q8 / (16384 * (LITE_PROJECTION / 2)));
+    int32_t x = game->x_q8 + (int32_t)((int64_t)fx * distance_q8 / 16384) - step_x * (LITE_RAYS / 2u);
+    int32_t z = game->y_q8 + (int32_t)((int64_t)fy * distance_q8 / 16384) - step_y * (LITE_RAYS / 2u);
+    const GameWorldTexture *asset = &game_world_flats[texture];
+    game_render_stats.plane_texture_pixels += LITE_W;
+    /* Keep large floor/ceiling areas lighter than the wall's darkest joints.
+     * This preserves texture detail without turning the low-resolution LCD
+     * into a dark checkerboard or drowning the enemy silhouettes. */
+    static const uint8_t plane_gray[16] = {
+        237,94,104,114,124,134,144,154,164,174,184,194,204,214,224,234
+    };
+    for (unsigned ray = 0; ray < LITE_RAYS; ++ray) {
+        const uint8_t color = game_gray(plane_gray[game_world_code(asset, (unsigned)(x >> 9),
+                                                                 (unsigned)(z >> 9))], game->contrast);
+        row[ray * 2u] = row[ray * 2u + 1u] = color;
+        x += step_x; z += step_y;
+    }
+}
+
+static void game_background_row(uint8_t *row, unsigned y,
+                                const DoomLiteGame *game, uint16_t sector) {
+#ifdef DOOM_GAME_FULL_PLANE_DETAIL
+    game_plane_row_detail(row, y, game, sector);
+#else
+    /* Floors/ceilings use square 2x2 screen samples; walls retain their
+     * full vertical resolution. An explicit row cache keeps this independent
+     * of the wall-painted framebuffer and halves plane texture work. */
+    if (!(y & 1u)) game_plane_row_detail(game_plane_row, y, game, sector);
+    memcpy(row, game_plane_row, LITE_W);
+#endif
 }
 
 /* Compare within this DDA interval before dividing. The bound checks retain
@@ -263,6 +425,23 @@ static void game_cast_spans(const DoomLiteGame *game, unsigned ray,
             const int32_t hit_x = (x >> 8) + (dx * (int32_t)(nearest >> 8) >> 14);
             const int32_t hit_y = (y >> 8) + (dy * (int32_t)(nearest >> 8) >> 14);
             const unsigned brick_u = (unsigned)(hit_x + hit_y) & 63u;
+            const unsigned front = line->front_sector == sector;
+            const GameWorldSide *side = game_world_side(map, hit_line, front);
+            const int world_u = side ? game_world_u(map, hit_line, front, hit_x, hit_y, side) : 0;
+            const int row_offset = side ? side->y_offset : 0;
+            const int incoming_top = clip_top, incoming_bottom = clip_bottom;
+            /* Near-sector planes hide geometry behind this boundary. A
+             * descending portal has no lower wall, so wall spans alone let
+             * a low actor paint through the foreground platform floor. */
+            const int current_top = game_project_y(current_ceiling, eye, safe_depth);
+            const int current_bottom = game_project_y(current_floor, eye, safe_depth);
+            const GameWorldSector *material = &game_world_maps[map->index].sectors[sector];
+            if (material->ceiling != GAME_WORLD_SKY)
+                game_add_span(ray, clip_top, current_top, safe_depth,
+                               GAME_WALL_PLANE, 0u, clip_top, clip_bottom);
+            game_add_span(ray, current_bottom, clip_bottom, safe_depth,
+                           GAME_WALL_PLANE, 0u, clip_top, clip_bottom);
+            unsigned before = game_span_count[ray];
             if (other == DOOM_MAP_NO_SECTOR || other >= map->sector_count) {
                 const unsigned marker = line->front_sector == sector
                     ? game_use_marker(line->special) : 0u;
@@ -275,43 +454,101 @@ static void game_cast_spans(const DoomLiteGame *game, unsigned ray,
                                safe_depth, style,
                                marker >= 2u ? game_sign_u(line, hit_x, hit_y, marker) : brick_u,
                                clip_top, clip_bottom);
+                const unsigned texture = side ? side->middle : 0u;
+                const int anchor = line->flags & 16u
+                    ? current_floor + (int)game_texture_height(texture) : current_ceiling;
+                game_texture_span(ray, before, texture, world_u, anchor + row_offset, eye);
+                if (game_span_count[ray] >= GAME_RAY_SPANS)
+                    game_add_fallback(ray, incoming_top, incoming_bottom, safe_depth,
+                                      (unsigned)base, brick_u);
                 GAME_SET_DEPTH(ray, safe_depth);
                 return;
             }
             const int floor = DoomLiteGame_FloorHeight(game, other);
             const int ceiling = DoomLiteGame_CeilingHeight(game, other);
-            const int top = game_project_y(ceiling, eye, safe_depth);
-            const int bottom = game_project_y(floor, eye, safe_depth);
+            const int top = game_project_y(ceiling < current_ceiling ? ceiling : current_ceiling,
+                                           eye, safe_depth);
+            const int bottom = game_project_y(floor > current_floor ? floor : current_floor,
+                                              eye, safe_depth);
             /* A sector that originally has zero headroom is a door. Its
              * ceiling moves vertically, so the light panel lifts gradually. */
             const int door = map->sectors[other].ceiling <= map->sectors[other].floor;
             /* Only the selected door surface needs its normalized U. Avoid
              * touching far sector records and dividing every rejected edge. */
             const uint8_t hit_u = door ? game_door_u(line, x, y, dx, dy) : 0u;
+            const unsigned upper_texture = side ? side->upper : 0u;
+            const unsigned lower_texture = side ? side->lower : 0u;
+            const int upper_anchor = line->flags & 8u ? current_ceiling
+                : ceiling + (int)game_texture_height(upper_texture);
+            const int lower_anchor = line->flags & 16u ? current_ceiling : floor;
             if (ceiling <= floor) {
-                game_add_span(ray, game_project_y(current_ceiling, eye, safe_depth),
-                               game_project_y(current_floor, eye, safe_depth),
-                               safe_depth, door ? 255u : (unsigned)base,
-                               door ? hit_u : brick_u, clip_top, clip_bottom);
+                /* A closed raised sector can have two different materials,
+                 * e.g. E1M2 computer wall above brown stone. Do not stretch
+                 * the upper texture across both tiers. Clamp their common
+                 * split so negative headroom never produces overlapping spans. */
+                const int join = ceiling < current_floor ? current_floor
+                    : ceiling > current_ceiling ? current_ceiling : ceiling;
+                if (join < current_ceiling) {
+                    game_add_span(ray, game_project_y(current_ceiling, eye, safe_depth),
+                                   game_project_y(join, eye, safe_depth),
+                                   safe_depth, door ? 255u : (unsigned)base,
+                                   door ? hit_u : brick_u, clip_top, clip_bottom);
+                    game_texture_span(ray, before, upper_texture, world_u, upper_anchor + row_offset, eye);
+                }
+                before = game_span_count[ray];
+                if (join > current_floor) {
+                    game_add_span(ray, game_project_y(join, eye, safe_depth),
+                                   game_project_y(current_floor, eye, safe_depth),
+                                   safe_depth, (unsigned)base, brick_u, clip_top, clip_bottom);
+                    game_texture_span(ray, before, lower_texture, world_u, lower_anchor + row_offset, eye);
+                }
+                if (game_span_count[ray] >= GAME_RAY_SPANS)
+                    game_add_fallback(ray, incoming_top, incoming_bottom, safe_depth,
+                                      (unsigned)base, brick_u);
                 GAME_SET_DEPTH(ray, safe_depth);
                 return;
             }
-            if (ceiling < current_ceiling)
+            if (ceiling < current_ceiling) {
                 game_add_span(ray, game_project_y(current_ceiling, eye, safe_depth),
                                top, safe_depth, door ? 255u : (unsigned)base,
                                door ? hit_u : brick_u, clip_top, clip_bottom);
-            if (floor > current_floor)
+                game_texture_span(ray, before, upper_texture, world_u, upper_anchor + row_offset, eye);
+            }
+            before = game_span_count[ray];
+            if (floor > current_floor) {
                 game_add_span(ray, bottom, game_project_y(current_floor, eye, safe_depth),
                                safe_depth, (unsigned)base, brick_u, clip_top, clip_bottom);
+                game_texture_span(ray, before, lower_texture, world_u, lower_anchor + row_offset, eye);
+            }
             if (top > clip_top) clip_top = top;
             if (bottom < clip_bottom) clip_bottom = bottom;
+            if (side && side->middle && clip_top < clip_bottom) {
+                /* A two-sided middle is a transparent railing/grate, never
+                 * a terminal opaque wall. Keep tracing the sector behind it. */
+                const unsigned texture = side->middle;
+                const int anchor = (line->flags & 16u
+                    ? (floor > current_floor ? floor : current_floor) + (int)game_texture_height(texture)
+                    : (ceiling < current_ceiling ? ceiling : current_ceiling)) + row_offset;
+                before = game_span_count[ray];
+                game_add_span(ray, game_project_y(anchor, eye, safe_depth),
+                               game_project_y(anchor - (int)game_texture_height(texture), eye, safe_depth),
+                               safe_depth, GAME_WALL_MASKED, 0u, clip_top, clip_bottom);
+                game_texture_span(ray, before, texture, world_u, anchor, eye);
+            }
+            if (game_span_count[ray] >= GAME_RAY_SPANS) {
+                game_add_fallback(ray, incoming_top, incoming_bottom, safe_depth,
+                                  (unsigned)base, brick_u);
+                GAME_SET_DEPTH(ray, safe_depth);
+                return;
+            }
+            if (clip_top >= clip_bottom) {
+                GAME_SET_DEPTH(ray, safe_depth);
+                return;
+            }
             if (++boundaries >= GAME_RAY_MAX_BOUNDARIES ||
                 game_span_count[ray] >= GAME_RAY_SPANS - 1u) {
-                ++game_render_stats.surface_limit_hits;
-                if (clip_bottom > clip_top)
-                    game_render_stats.surface_limit_pixels += (uint32_t)(clip_bottom - clip_top);
-                game_add_span(ray, clip_top, clip_bottom, safe_depth,
-                               (unsigned)base, brick_u, clip_top, clip_bottom);
+                game_add_fallback(ray, incoming_top, incoming_bottom, safe_depth,
+                                  (unsigned)base, brick_u);
                 GAME_SET_DEPTH(ray, safe_depth);
                 return;
             }
@@ -327,13 +564,23 @@ static void game_cast_spans(const DoomLiteGame *game, unsigned ray,
     }
 }
 
+static unsigned game_span_code(const GameWallSpan *span, unsigned y) {
+    const unsigned texture_v = (span->texture_v +
+        (y - span->top) * span->texture_step) >> 8;
+    return game_world_code(&game_world_textures[span->texture], span->texture_u, texture_v);
+}
+
+static int game_span_opaque(const GameWallSpan *span, unsigned y) {
+    return span->color != GAME_WALL_MASKED || game_span_code(span, y) != 0u;
+}
+
 static uint8_t game_span_gray(const GameWallSpan *span, unsigned y) {
-    if (span->color == 255u)
+    if (span->color == 255u && !span->texture)
         return door_panel_color(y, span->top, span->bottom, span->u);
     const unsigned height = span->bottom - span->top;
     const unsigned v = y - span->top;
     unsigned base = span->color;
-    if (span->color >= GAME_WALL_USED_SWITCH) {
+    if (span->color >= GAME_WALL_USED_SWITCH && span->color <= GAME_WALL_SWITCH) {
         base = 142u + span->depth / 28u;
         if (base > 202u) base = 202u;
         const unsigned sign_depth = span->depth < 12u ? 12u : span->depth;
@@ -365,6 +612,10 @@ static uint8_t game_span_gray(const GameWallSpan *span, unsigned y) {
             return sign == 2u ? 213u : 246u;
         }
     }
+    if (span->texture) {
+        const unsigned code = game_span_code(span, y);
+        return code ? game_world_gray[code] : 237u;
+    }
     const unsigned course = v >= height * 3u / 4u ? 3u
         : v >= height / 2u ? 2u : v >= height / 4u ? 1u : 0u;
     const unsigned u = (span->u + ((course & 1u) ? 32u : 0u)) & 63u;
@@ -375,36 +626,68 @@ static uint8_t game_span_gray(const GameWallSpan *span, unsigned y) {
     return (uint8_t)base;
 }
 
+static inline void game_paint_wall_tile(uint8_t *pixels, unsigned ray,
+                                        unsigned first_row, unsigned end_row,
+                                        uint8_t contrast) {
+    /* Opaque tiers do not overlap, while middle railings do. Paint far to
+     * near so their holes retain the correct wall or fallback behind. */
+    for (unsigned i = game_span_count[ray]; i > 0u; --i) {
+        const GameWallSpan *span = &game_spans[game_span_first[ray] + (i - 1u)];
+        if (span->color == GAME_WALL_PLANE) continue;
+        const unsigned top = span->top > first_row ? span->top : first_row;
+        const unsigned bottom = span->bottom < end_row ? span->bottom : end_row;
+        unsigned drawn = 0u;
+        for (unsigned y = top; y < bottom; ++y) {
+            if (!game_span_opaque(span, y)) continue;
+            const uint8_t color = game_gray(game_span_gray(span, y), contrast);
+            uint8_t *destination = pixels + y * LITE_W + ray * 2u;
+            destination[0] = color;
+            destination[1] = color;
+            drawn += span->texture ? 2u : 0u;
+        }
+        game_render_stats.world_texture_pixels += drawn;
+    }
+}
+
 void DoomLite_RenderGameScene(uint8_t *pixels, const DoomLiteGame *game) {
     game_wall_ready = 0u;
     memset(&game_render_stats, 0, sizeof(game_render_stats));
     if (!pixels || !game || !game->map) return;
     const uint16_t sector = DoomLiteGame_PlayerSector(game);
     const int eye = DoomLiteGame_FloorHeight(game, sector) + 41;
+    const uint32_t ray_start = game_render_now();
+    unsigned span_cursor = 0u;
     for (unsigned ray = 0; ray < LITE_RAYS; ++ray) {
         const int offset = ((int)ray * 168) / (int)(LITE_RAYS - 1u) - 84;
+        game_span_first[ray] = (uint16_t)span_cursor;
         game_cast_spans(game, ray, (uint16_t)((int)game->facing * 4 + offset),
                          offset, sector, eye);
+        span_cursor += game_span_count[ray];
     }
+    game_render_stats.span_cache_bytes = (uint32_t)(span_cursor * sizeof(GameWallSpan));
+    game_render_stats.ray_us = game_render_now() - ray_start;
 #ifdef DOOM_LITE_ROW_REFERENCE
     /* Portable test baseline for byte-identical tile rendering comparisons. */
     for (unsigned y = 0; y < DOOM_GAME_VIEW_H; ++y) {
         uint8_t *row = pixels + y * LITE_W;
-        const uint8_t background = y < DOOM_GAME_VIEW_H / 2u
-            ? (uint8_t)(237u - y / 7u) : (uint8_t)(205u + y / 10u);
+        const uint32_t plane_start = game_render_now();
+        game_background_row(row, y, game, sector);
+        game_render_stats.plane_us += game_render_now() - plane_start;
+        const uint32_t wall_start = game_render_now();
         for (unsigned ray = 0; ray < LITE_RAYS; ++ray) {
-            uint8_t color = background;
             for (unsigned i = 0; i < game_span_count[ray]; ++i) {
-                const GameWallSpan *span = &game_spans[ray][i];
-                if (y >= span->top && y < span->bottom) {
-                    color = game_span_gray(span, y);
+                const GameWallSpan *span = &game_spans[game_span_first[ray] + (i)];
+                if (span->color == GAME_WALL_PLANE) continue;
+                if (y >= span->top && y < span->bottom && game_span_opaque(span, y)) {
+                    const uint8_t color = game_gray(game_span_gray(span, y), game->contrast);
+                    row[ray * 2u] = color;
+                    row[ray * 2u + 1u] = color;
+                    game_render_stats.world_texture_pixels += span->texture ? 2u : 0u;
                     break;
                 }
             }
-            color = game_gray(color, game->contrast);
-            row[ray * 2u] = color;
-            row[ray * 2u + 1u] = color;
         }
+        game_render_stats.wall_us += game_render_now() - wall_start;
     }
 #else
     /* Paint eight-row tiles. Spans already partition each ray's vertical
@@ -414,24 +697,15 @@ void DoomLite_RenderGameScene(uint8_t *pixels, const DoomLiteGame *game) {
     for (unsigned first_row = 0u; first_row < DOOM_GAME_VIEW_H; first_row += 8u) {
         const unsigned end_row = first_row + 8u < DOOM_GAME_VIEW_H
             ? first_row + 8u : DOOM_GAME_VIEW_H;
+        const uint32_t plane_start = game_render_now();
         for (unsigned y = first_row; y < end_row; ++y) {
-            const uint8_t background = y < DOOM_GAME_VIEW_H / 2u
-                ? (uint8_t)(237u - y / 7u) : (uint8_t)(205u + y / 10u);
-            memset(pixels + y * LITE_W, game_gray(background, game->contrast), LITE_W);
+            game_background_row(pixels + y * LITE_W, y, game, sector);
         }
-        for (unsigned ray = 0u; ray < LITE_RAYS; ++ray) {
-            for (unsigned i = 0u; i < game_span_count[ray]; ++i) {
-                const GameWallSpan *span = &game_spans[ray][i];
-                const unsigned top = span->top > first_row ? span->top : first_row;
-                const unsigned bottom = span->bottom < end_row ? span->bottom : end_row;
-                for (unsigned y = top; y < bottom; ++y) {
-                    const uint8_t color = game_gray(game_span_gray(span, y), game->contrast);
-                    uint8_t *destination = pixels + y * LITE_W + ray * 2u;
-                    destination[0] = color;
-                    destination[1] = color;
-                }
-            }
-        }
+        game_render_stats.plane_us += game_render_now() - plane_start;
+        const uint32_t wall_start = game_render_now();
+        for (unsigned ray = 0u; ray < LITE_RAYS; ++ray)
+            game_paint_wall_tile(pixels, ray, first_row, end_row, game->contrast);
+        game_render_stats.wall_us += game_render_now() - wall_start;
     }
 #endif
     pixels[(DOOM_GAME_VIEW_H / 2u) * LITE_W + LITE_W / 2u] = 12u;
@@ -563,9 +837,10 @@ void DoomLite_RenderGameThings(uint8_t *pixels, const DoomLiteGame *game) {
                 const unsigned ray = (unsigned)x / 2u;
                 int visible = 1;
                 for (unsigned span = 0; span < game_span_count[ray]; ++span) {
-                    const GameWallSpan *wall = &game_spans[ray][span];
+                    const GameWallSpan *wall = &game_spans[game_span_first[ray] + (span)];
                     if (y >= wall->top && y < wall->bottom &&
-                        sprite->depth + 2u >= wall->depth) { visible = 0; break; }
+                        sprite->depth + 2u >= wall->depth &&
+                        game_span_opaque(wall, (unsigned)y)) { visible = 0; break; }
                 }
                 if (!visible) continue;
                 const unsigned index = source_row + source_x[x - sprite->left];
@@ -591,7 +866,7 @@ static int game_map_y(const GameMapView *view, int32_t y) {
            (32 * (int)view->divisor) + view->oy;
 }
 static void game_map_pixel(uint8_t *pixels, int x, int y, uint8_t color) {
-    if (x >= 0 && x < LITE_W && y >= 16 && y < LITE_H)
+    if (x >= 0 && x < LITE_W && y >= 0 && y < (int)DOOM_GAME_VIEW_H)
         pixels[y * LITE_W + x] = color;
 }
 static void game_map_line(uint8_t *pixels, int x0, int y0, int x1, int y1,
@@ -643,24 +918,26 @@ void DoomLite_RenderGameMap(uint8_t *pixels, const DoomLiteGame *game, unsigned 
     memset(&game_render_stats, 0, sizeof(game_render_stats));
     if (!pixels || !game || !game->map) return;
     const DoomMap *map = game->map;
-    GameMapView view = {(LITE_W - (int)map->grid_width) / 2, 16, 1u, 1u, map};
-    /* E1M2 is taller than the LCD. The overview must fit the entire level,
-     * including its exit; keep objective symbols full-size at either scale. */
-    if (map->grid_height > LITE_H - 16u) {
-        view.scale = LITE_H - 16u;
+    GameMapView view = {(LITE_W - (int)map->grid_width) / 2, 0, 1u, 1u, map};
+    /* Both maps fit above the classic bottom bar. Leave nine pixels around
+     * the overview so eight-pixel key marks at the level edges stay complete. */
+    const unsigned map_width = LITE_W - 18u;
+    const unsigned map_height = DOOM_GAME_VIEW_H - 18u;
+    if (map->grid_height > map_height) {
+        view.scale = map_height;
         view.divisor = map->grid_height;
     }
-    if (map->grid_width * view.scale > LITE_W * view.divisor) {
-        view.scale = LITE_W;
+    if (map->grid_width * view.scale > map_width * view.divisor) {
+        view.scale = map_width;
         view.divisor = map->grid_width;
     }
     view.ox = (LITE_W - (int)(map->grid_width * view.scale / view.divisor)) / 2;
-    view.oy = 16 + ((LITE_H - 16) - (int)(map->grid_height * view.scale / view.divisor)) / 2;
+    view.oy = ((int)DOOM_GAME_VIEW_H - (int)(map->grid_height * view.scale / view.divisor)) / 2;
     if (zoom >= 2u) {
         view.scale = 2u;
         view.divisor = 1u;
         view.ox = LITE_W / 2 - (game->x_q8 / 256 - map->grid_x0) / 16;
-        view.oy = (16 + LITE_H) / 2 - (game->y_q8 / 256 - map->grid_y0) / 16;
+        view.oy = (int)DOOM_GAME_VIEW_H / 2 - (game->y_q8 / 256 - map->grid_y0) / 16;
         if (map->grid_width * 2u <= LITE_W)
             view.ox = (LITE_W - (int)map->grid_width * 2) / 2;
         else {
@@ -668,11 +945,11 @@ void DoomLite_RenderGameMap(uint8_t *pixels, const DoomLiteGame *game, unsigned 
             if (view.ox < LITE_W - (int)map->grid_width * 2)
                 view.ox = LITE_W - (int)map->grid_width * 2;
         }
-        if (view.oy > 16) view.oy = 16;
-        if (view.oy < LITE_H - (int)map->grid_height * 2)
-            view.oy = LITE_H - (int)map->grid_height * 2;
+        if (view.oy > 0) view.oy = 0;
+        if (view.oy < (int)DOOM_GAME_VIEW_H - (int)map->grid_height * 2)
+            view.oy = (int)DOOM_GAME_VIEW_H - (int)map->grid_height * 2;
     }
-    memset(pixels, 245, LITE_W * LITE_H);
+    memset(pixels, 245, LITE_W * DOOM_GAME_VIEW_H);
     for (unsigned i = 0; i < map->line_count; ++i) {
         const DoomMapLine *line = &map->lines[i];
         uint8_t color = 170u;
