@@ -48,7 +48,7 @@ The light and sphere radius inverses are constants, specular exponent 16 uses
 four squarings, and shadow traversal stops at the first blocker. Only mirror
 material generates a secondary reflection, with no refraction branches.
 
-## Studio V2 candidate
+## Studio V2
 
 The next candidate uses the same three enlarged spheres, camera controls,
 framebuffer and progressive sampling schedule. Materials are glass on the
@@ -72,8 +72,7 @@ V2 adds refraction ray counts and inclusive refraction timing to the logs and
 panel. Glass exits, total internal reflection events and floor reflection rays
 are also recorded. `RAY_EVENT` now includes the device millisecond timestamp
 so physical wait/start timing can be checked. The first tested V1 results below
-remain a separate baseline; V2 hardware performance and visual quality are
-pending a new device test.
+remain a separate baseline; V2 hardware observations are recorded separately.
 
 The signed V2 candidate is 5,945,252 bytes (7,912 bytes above V1). Its ELF
 contains 5,935,799 bytes of text, 4,948 bytes of data and 86,256 bytes of BSS.
@@ -153,7 +152,7 @@ stages passed, including 13 dashboard tests. Static ARM stack output reports
 464 bytes for the largest individual Ray function, excluding callees and
 library routines. This is not a measurement of the task's peak stack usage.
 
-### Hardware smoke test: 2026-10-04
+### V1 hardware smoke test: 2026-10-04
 
 Firmware `90d08b7` was flashed successfully, with eight matching transfer
 checksum samples and no independent NAND readback. The panel backend `554932d`
@@ -184,6 +183,46 @@ by six System task lists with no RayDemo task. Allocated heap returned to
 71 KiB capacity remained reserved. No System Panic text was present.
 F1 reset, C1/C3 contrast, repeated launches, precise physical quiet-wait timing,
 visual quality and peak task stack remain unverified on hardware.
+
+### Studio V2 hardware smoke test: 2026-10-04
+
+Firmware `304f251` was flashed successfully with eight matching transfer
+checksum samples and no independent NAND readback. The user reported normal
+scene appearance and operation in response to the scene, movement, progressive
+render and exit test. Evidence is saved under
+`hp-39-gii/outputs/ray-studio-2026-10-04/hardware/` beside the repository.
+`ray-studio-hardware-assessment.json` records the frozen raw log hash, capture
+segments, exact packet lines and verification limits.
+
+Three complete moved views were captured at C2 contrast. Each completed all
+32,512 primary samples; these are the first completed PERF packets after their
+corresponding done events, excluding later viewing heartbeats:
+
+| Capture / generation | Complete frame | Trace batches | LCD and barriers | Refraction rays / glass exits | Floor reflection rays |
+|---|---:|---:|---:|---:|---:|
+| 1 / 13 | 10,129 ms | 5,632.202 ms | 1,440.450 ms | 7,822 / 3,911 | 8,813 |
+| 2 / 75 | 10,385 ms | 5,515.370 ms | 1,773.319 ms | 6,616 / 3,308 | 9,286 |
+| 2 / 79 | 10,052 ms | 5,530.633 ms | 1,419.593 ms | 6,922 / 3,461 | 9,223 |
+
+The quiet wait is excluded from complete-frame duration. Paired ready/wait and
+start events were 1,004, 1,005, 1,008, 1,000 and 1,005 ms apart. All recorded
+moving and waiting PERF packets had zero tracing, ray and intersection counts.
+The largest batch in the completed views was 17.389 ms; the 6 ms checked budget
+is not a hard deadline. No total-internal-reflection events occurred in these
+views; the host suite covers that path. Phase timings overlap and must not be
+summed. These views do not establish a scene-wide bound or a controlled speed
+comparison with V1.
+
+Ray memory reports observed 69,320 allocated heap bytes out of 282,624 and a
+73,056-byte SRAM arena with zero swap. These are whole-System observations,
+not Ray-exclusive allocations or a measured task-stack peak.
+
+The two bounded serial captures have a gap. The later session's BOOT was not
+captured, and generation numbers are scoped to each capture. No RAY_EXIT or
+post-exit task/heap telemetry was captured: V2 exit is user-reported, while V1
+has separate serial cleanup proof above. No System Panic text appeared in the
+captured portions. F1 reset, C1/C3, repeated launch/exit stability and task peak
+stack remain unverified on hardware.
 
 ## References
 
