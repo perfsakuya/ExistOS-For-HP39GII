@@ -228,8 +228,8 @@ ELF has 5,942,770 bytes of text, 4,948 bytes of data and 89,120 bytes of BSS.
 The static post state is 2,848 bytes on ARM. Actual production compiler flags
 report 208 bytes for the AA batch function and 16 for its Q8 sampler, excluding
 other callees; the largest individual Ray function remains 472 bytes. The
-8 KiB task stack peak, new AA device cost, vertical controls and V4 physical
-exit are pending hardware measurement.
+8 KiB task stack peak, vertical controls and V4 physical exit are pending
+hardware measurement. V4 AA device observations are recorded below.
 
 ## Logs and dashboard
 
@@ -392,3 +392,41 @@ The visual and algorithm research referenced
 and [smallpt](https://www.kevinbeason.com/smallpt/).
 Ray implements its own small C scene and routines; it does not embed their
 frameworks or stochastic path-tracing implementation.
+
+
+## Studio V4 hardware capture: FXAA, 2026-10-04
+
+Source `0ab335b59a627c0334f86b5bdab8bff02c012ea6` was written to System
+using the hash-checked RAM recovery loader. The flasher exited 0 and all eight
+reported transfer checksums matched; this is not an independent NAND readback.
+The signed image SHA-256 is
+`FCD438ACE5A6527AF9F5A67FAB50EAC364826AB227254ECB5E22BF2A583616B9`.
+COM6 reconnected and a bounded five-minute capture closed with exit 0.
+
+The capture contains three complete frames with unchanged camera and C2
+contrast: two AA ON and one AA OFF. Their first DONE PERF durations were
+12,906 / 13,809 / 13,389 ms. AA active work took 37,660 / 35,100 / 0 us;
+maximum AA batches were 4,945 / 3,999 / 0 us. ON-stage wall times were 206
+and 210 ms, including caller scheduling/yields and serial event timing.
+Whole-frame elapsed differences include tracing/LCD/scheduling variation and
+must not be attributed solely to AA.
+
+Each frame has 32,512 primary samples, 18,306 reflection rays, 78,405 shadow
+rays and 8,856 refraction rays. All recorded ray and intersection/test counts
+are identical across the OFF/ON comparison. Both ON frames scanned 32,512
+pixels, changed 5,301, classified 9,211 candidates and took 38,841 endpoint
+samples. Five start events are at least 1,000 ms after their logged idle base;
+seven WAIT PERF packets have zero ray counts. No Panic text was captured.
+
+The capture starts after camera movement: height is already `y_q8=764`
+(approximately 2.98) and does not change thereafter. It has no BOOT or EXIT
+packet. Continuous device elevation, visual controls/AA, return to a responsive
+list, exit heap return and peak task stack remain unverified here; host checks
+are separate evidence. User confirmation was pending when this record was saved.
+
+Evidence is under `hp-39-gii/outputs/ray-fxaa-flight-2026-10-04/hardware/`:
+`deployment.json`, flash logs, `ray-fxaa-flight-hardware-assessment.json` and
+`ray-fxaa-flight-hardware.log`. The closed raw log SHA-256 is
+`81D9BCE03D59113117C373359CBB7A93BE2B62F89446F4C737266E31D4AA92A3`.
+The immutable predeployment manifest retains `hardware_verified=false`; the
+separate hardware assessment describes this partial verification.
