@@ -61,11 +61,15 @@ unsigned RaySession_Update(RaySession *s, uint32_t now, unsigned buttons) {
                                  (buttons & RAY_PITCH_DOWN ? 1.0f : 0.0f)) * (float)dt * 0.001f;
             const float roll = ((buttons & RAY_ROLL_RIGHT ? 1.0f : 0.0f) -
                                 (buttons & RAY_ROLL_LEFT ? 1.0f : 0.0f)) * (float)dt * 0.001f;
+            const float elevation = ((buttons & RAY_ASCEND ? 1.0f : 0.0f) -
+                                     (buttons & RAY_DESCEND ? 1.0f : 0.0f)) * (float)dt * 0.002f;
             int changed = 0;
             if (distance != 0.0f || turn != 0.0f)
                 changed = RayCamera_Move(&s->camera, distance, turn);
             if (pitch != 0.0f || roll != 0.0f)
                 changed |= RayCamera_Orient(&s->camera, 0.0f, pitch, roll);
+            if (elevation != 0.0f)
+                changed |= RayCamera_Elevate(&s->camera, elevation);
             if (changed) {
                 invalidate(s, now, &events);
                 s->phase = RAY_PREVIEW;

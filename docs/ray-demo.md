@@ -17,8 +17,9 @@ and separated from the others; tracing, collision and preview share the scene.
 | Left / Right | Turn |
 | 8 / 2 | Pitch up / down |
 | 4 / 6 | Roll left / right |
+| 9 / 7 | Ascend / descend |
 | F1 | Reset the camera |
-| F2 | Toggle edge antialiasing (default OFF on launch) |
+| F2 | Toggle bounded grayscale FXAA (default OFF on launch) |
 | F3 | Cycle C1 / C2 / C3 contrast |
 | F6 / ON | Return to the application list |
 
@@ -166,6 +167,69 @@ Actual compiler-option stack reports show a largest individual Ray function
 of 472 bytes and AA batch function of 96 bytes, excluding callees. The task
 still has 8 KiB; its peak is unmeasured. V3 hardware observations are recorded
 separately below.
+
+## Studio V4: vertical movement and bounded grayscale FXAA
+
+The `9/7` keys raise/lower the camera at the same rate as horizontal movement.
+Height is constrained to 0.20--8.0 scene units. Collision uses the closest point
+on the full three-dimensional movement segment against spheres inflated by the
+camera radius of 0.18. This allows flying above a sphere without allowing a
+large movement step to tunnel through it. Forward/backward translation remains
+horizontal and independent of pitch and roll. F1 restores height 1.45.
+Holding a blocked or limited movement key still prevents tracing; the observed
+release restarts the full one-second quiet period.
+
+V3's diagonal-neighbor blend is replaced with a CPU grayscale adaptation of
+[NVIDIA FXAA](https://developer.download.nvidia.com/assets/gamedev/files/sdk/11/FXAA_WhitePaper.pdf).
+It is a bounded adaptation, not the original GPU shader or a conformant GPU
+FXAA preset. It works on the final contrast-mapped 8-bit image, adding no rays.
+Local contrast rejection skips flat regions; weighted second differences classify
+edge orientation, and the strongest contrast pair defines the perpendicular
+sample direction. Edge ends are searched up to four pixels in each direction.
+Fixed-point resampling applies the resulting subpixel offset, with capped
+subpixel blending and additional protection for thin lines and coherent axial
+edges. Bounded search can miss longer edge structure; image-space filtering
+cannot reconstruct details that were already lost to undersampling.
+
+Eleven cached original rows (2,816 bytes) cover the search and bilinear sampling
+footprint. The filter is deterministic across batch sizes and never reads back
+filtered output as source. It retains the eight-row / 6,000 us soft batch budget
+and input cancellation. Separate `aa_edges` and `aa_search_steps` counters
+record classified candidates and actual endpoint sampling, alongside `aa_us`,
+changed pixels and maximum batch time. V4 hardware cost is unmeasured.
+
+Traditional MSAA is coverage sampling for rasterized primitives; four complete
+ray samples per pixel here would be supersampling and require substantially
+more tracing. Neither multisample ray tracing nor a GPU pipeline is introduced.
+See section 3.2.1 of the [Khronos OpenGL specification](https://registry.khronos.org/OpenGL/specs/gl/glspec21.pdf).
+
+The new logs include camera `y_q8` (height multiplied by 256), along with
+position X/Z, yaw/pitch/roll, and `idle_base_ms` for checking the quiet deadline
+without treating delayed serial-print timestamps as input timestamps. The
+dashboard source displays height and the boot's AA method; its running backend
+must load the new source to expose these fields. Earlier V3/V2 measurements
+below remain measurements of their original images and algorithms.
+
+Offline validation passed all six stages, including 17 dashboard tests. The
+first dashboard attempt caught a field-name parser bug excluding numeric
+characters; its failed evidence is retained, and only dashboard/HTML/image
+stages were resumed after the parser correction. Elevation, three-dimensional
+sweeps, finite input, held limits, release deadlines, clock wrap, twelve extreme
+height/orientation previews, frame guards and unchanged sample coverage passed.
+AA also preserves flat/linear ramps and coherent axial lines, keeps outer
+borders exact, and produces the same bytes/counters across full-frame and
+1/3/7/31-row batches with no new ray calls. Two independently integrated
+synthetic diagonals changed squared error from 520,192 to 10,660 and from
+736,596 to 141,456; these are local evidence, not general image-quality scores.
+Previews are in `build/ray-fxaa-flight-validation/`.
+
+The signed candidate is 5,952,228 bytes and passes System/VM ROM limits. Its
+ELF has 5,942,770 bytes of text, 4,948 bytes of data and 89,120 bytes of BSS.
+The static post state is 2,848 bytes on ARM. Actual production compiler flags
+report 208 bytes for the AA batch function and 16 for its Q8 sampler, excluding
+other callees; the largest individual Ray function remains 472 bytes. The
+8 KiB task stack peak, new AA device cost, vertical controls and V4 physical
+exit are pending hardware measurement.
 
 ## Logs and dashboard
 

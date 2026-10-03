@@ -20,9 +20,15 @@ APP = ROOT / "System/applications/user/ray_demo"
 DEFAULT_GCC = Path("D:/w64devkit/bin/gcc.exe")
 BASE_IMAGES = ["preview.pgm", "trace-c1.pgm", "trace-c2.pgm", "trace-c3.pgm"]
 POSE_AA_IMAGES = ["preview-pitch.pgm", "preview-roll.pgm", "preview-tilt.pgm", "trace-tilt.pgm",
-                  "trace-c2.pgm", "trace-aa.pgm", "trace-tilt.pgm", "trace-tilt-aa.pgm",
-                  "aa-diagonal-before.pgm", "aa-diagonal-after.pgm"]
-ALL_IMAGES = list(dict.fromkeys(BASE_IMAGES + POSE_AA_IMAGES))
+                  "trace-c2.pgm", "trace-aa.pgm", "trace-tilt.pgm", "trace-tilt-aa.pgm"]
+HEIGHT_IMAGES = ["preview-low.pgm", "trace-low.pgm", "preview-high.pgm", "trace-high.pgm"]
+FXAA_IMAGES = ["aa-diagonal-before.pgm", "aa-diagonal-after.pgm",
+               "aa-diagonal-reference.pgm", "aa-diagonal-negative-reference.pgm",
+               "aa-diagonal-negative-before.pgm", "aa-diagonal-negative-after.pgm",
+               "aa-circle-before.pgm", "aa-circle-after.pgm",
+               "aa-far-checker-before.pgm", "aa-far-checker-after.pgm",
+               "aa-fine-lines-before.pgm", "aa-fine-lines-after.pgm"]
+ALL_IMAGES = list(dict.fromkeys(BASE_IMAGES + POSE_AA_IMAGES + HEIGHT_IMAGES + FXAA_IMAGES))
 
 
 def run_stage(stages, name, command, cwd, output):
@@ -64,6 +70,8 @@ def contact_sheet(output):
 
     sheet_for(BASE_IMAGES, "contact-sheet.png")
     sheet_for(POSE_AA_IMAGES, "pose-aa-contact-sheet.png")
+    sheet_for(HEIGHT_IMAGES, "height-contact-sheet.png")
+    sheet_for(FXAA_IMAGES, "fxaa-quality-contact-sheet.png")
 
 
 def dashboard_html(output):
@@ -100,7 +108,7 @@ def main():
     sources += [Path(__file__).resolve(), ROOT / "tools/ray/check_ray.c"]
     evidence["sources"] = [{"path": str(source), "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
                            for source in sources]
-    flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror"]
+    flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Wconversion", "-Wshadow", "-Wpedantic", "-Werror"]
     core_object = output / "RayCore.observed.o"
     executable = output / ("check_ray.exe" if os.name == "nt" else "check_ray")
     try:
@@ -122,7 +130,8 @@ def main():
             return 1
         evidence["passed"] = True
         for name in ALL_IMAGES + [name.replace(".pgm", ".png") for name in ALL_IMAGES] + [
-                "contact-sheet.png", "pose-aa-contact-sheet.png"]:
+                "contact-sheet.png", "pose-aa-contact-sheet.png", "height-contact-sheet.png",
+                "fxaa-quality-contact-sheet.png"]:
             artifact = output / name
             evidence["artifacts"].append({"path": str(artifact), "bytes": artifact.stat().st_size,
                                           "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()})

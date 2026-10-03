@@ -39,6 +39,8 @@ static const float sphere_inverse_radius[RAY_SPHERE_COUNT] = {
 #define RAY_CAMERA_MAX_X    6.0f
 #define RAY_CAMERA_MIN_Z   -7.0f
 #define RAY_CAMERA_MAX_Z    7.0f
+#define RAY_CAMERA_MIN_Y    0.20f
+#define RAY_CAMERA_MAX_Y    8.0f
 #define RAY_DEFAULT_PITCH  -0.1001674212f /* -asin(0.10), preserving the V2 view. */
 #define RAY_PITCH_LIMIT     1.3962634016f /* 80 degrees. */
 #define RAY_SCREEN_SCALE   (0.70f / 128.0f)
@@ -239,7 +241,8 @@ static int position_in_bounds(RayVec3 position)
            position.x <= RAY_CAMERA_MAX_X &&
            position.z >= RAY_CAMERA_MIN_Z &&
            position.z <= RAY_CAMERA_MAX_Z &&
-           position.y > RAY_ORIGIN_OFFSET && position.y <= 8.0f;
+           position.y >= RAY_CAMERA_MIN_Y &&
+           position.y <= RAY_CAMERA_MAX_Y;
 }
 
 static int finite_camera_angles(const RayCamera *camera)
@@ -278,22 +281,24 @@ int RayCamera_Orient(RayCamera *camera, float yaw_delta, float pitch_delta,
 
 static int clear_movement(RayVec3 from, RayVec3 to)
 {
-    float dx = to.x - from.x;
-    float dz = to.z - from.z;
-    float length_squared = dx * dx + dz * dz;
+    RayVec3 segment;
+    float length_squared;
     unsigned i;
+    /* Bounds keep every subtraction and squared distance small, including
+       when a public movement API receives a huge finite delta. */
+    if (!position_in_bounds(from) || !position_in_bounds(to)) return 0;
+    segment = vec_subtract(to, from);
+    length_squared = vec_dot(segment, segment);
     for (i = 0; i < RAY_SPHERE_COUNT; ++i) {
-        float x = from.x - Ray_Spheres[i].center.x;
-        float z = from.z - Ray_Spheres[i].center.z;
+        RayVec3 offset = vec_subtract(from, Ray_Spheres[i].center);
         float fraction = 0.0f;
         float radius = Ray_Spheres[i].radius + RAY_CAMERA_RADIUS;
         if (length_squared > 0.0f)
-            fraction = clamp_unit(-(x * dx + z * dz) / length_squared);
-        x += fraction * dx;
-        z += fraction * dz;
-        /* Conservative horizontal clearance also protects the camera near
-           a sphere's top and prevents a large step passing through it. */
-        if (x * x + z * z <= radius * radius) return 0;
+            fraction = clamp_unit(-vec_dot(offset, segment) / length_squared);
+        offset = vec_add(offset, vec_scale(segment, fraction));
+        /* Closest point on the full 3D segment against the inflated sphere.
+           A camera can pass above a sphere while large steps cannot tunnel. */
+        if (vec_dot(offset, offset) <= radius * radius) return 0;
     }
     return 1;
 }
@@ -322,6 +327,27 @@ int RayCamera_Move(RayCamera *camera, float distance, float turn)
         }
     }
     return changed;
+}
+
+int RayCamera_Elevate(RayCamera *camera, float delta)
+{
+    RayVec3 candidate;
+    if (camera == NULL || !finite_float(delta) ||
+        !finite_camera_angles(camera) || !position_in_bounds(camera->position))
+        return 0;
+    candidate = camera->position;
+    /* Compare before adding so FLT_MAX-sized finite deltas simply saturate. */
+    if (delta > RAY_CAMERA_MAX_Y - candidate.y)
+        candidate.y = RAY_CAMERA_MAX_Y;
+    else if (delta < RAY_CAMERA_MIN_Y - candidate.y)
+        candidate.y = RAY_CAMERA_MIN_Y;
+    else
+        candidate.y += delta;
+    if (candidate.y == camera->position.y ||
+        !clear_movement(camera->position, candidate))
+        return 0;
+    camera->position = candidate;
+    return 1;
 }
 
 uint8_t Ray_MapGray(float luminance, unsigned contrast)

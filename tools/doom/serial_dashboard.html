@@ -122,8 +122,8 @@ async function refresh() {
     byId('rayphases').textContent = ray ? [['camera', '相机'], ['intersect', '交点'], ['shadow', '阴影'], ['shade', '着色'], ['reflection', '反射'], ['refraction', '折射']].map(([key, label]) => `${label} ${rayMs(ray[`${key}_us`])} ms`).join(' · ') : 'Ray 各阶段时间 —';
     byId('rayexit').textContent = ray ? `退出阶段 ${ray.exit_phases.join(' → ') || '—'}` : 'Ray 退出阶段 —';
     const degrees = value => value == null ? '—' : (value * 180 / (1000 * Math.PI)).toFixed(1) + '°';
-    byId('raycamera').textContent = ray ? `相机 偏航 ${degrees(ray.yaw_mrad)} · 俯仰 ${degrees(ray.pitch_mrad)} · 滚转 ${degrees(ray.roll_mrad)}` : 'Ray 相机 —';
-    byId('rayaa-detail').textContent = ray ? `AA ${ray.aa_enabled == null ? '—' : ray.aa_enabled ? 'ON' : 'OFF'} · 行 ${ray.aa_rows ?? '—'} / 127 · 扫描 ${ray.aa_pixels ?? '—'} · 改动 ${ray.aa_changed ?? '—'} 像素 · 最大批次 ${rayMs(ray.aa_batch_max_us)} ms` : 'Ray 抗锯齿 —';
+    byId('raycamera').textContent = ray ? `相机 高度 ${ray.y_q8 == null ? '—' : (ray.y_q8 / 256).toFixed(2)} · 偏航 ${degrees(ray.yaw_mrad)} · 俯仰 ${degrees(ray.pitch_mrad)} · 滚转 ${degrees(ray.roll_mrad)}` : 'Ray 相机 —';
+    byId('rayaa-detail').textContent = ray ? `AA ${ray.aa_enabled == null ? '—' : ray.aa_enabled ? 'ON' : 'OFF'} · ${ray.aa_method ?? '—'} · 行 ${ray.aa_rows ?? '—'} / 127 · 扫描 ${ray.aa_pixels ?? '—'} · 改动 ${ray.aa_changed ?? '—'} · 边缘 ${ray.aa_edges ?? '—'} · 搜索 ${ray.aa_search_steps ?? '—'} · 最大批次 ${rayMs(ray.aa_batch_max_us)} ms` : 'Ray 抗锯齿 —';
     byId('fps').textContent = s.performance?.fps != null ? `${s.performance.fps} fps` : '—';
     byId('frametime').textContent = s.performance ? `${s.performance.total_ms} ms` : '—';
     byId('litefps').textContent = s.lite ? `${s.lite.fps} fps` : '—';

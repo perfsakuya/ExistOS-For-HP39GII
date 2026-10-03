@@ -42,6 +42,8 @@ static unsigned buttons_for(uint16_t key) {
         case KEY_8: return RAY_PITCH_UP;
         case KEY_4: return RAY_ROLL_LEFT;
         case KEY_6: return RAY_ROLL_RIGHT;
+        case KEY_7: return RAY_DESCEND;
+        case KEY_9: return RAY_ASCEND;
         default: return 0u;
     }
 }
@@ -74,13 +76,14 @@ static void preview_badge(uint8_t *pixels) {
 
 static void log_event(const char *event) {
     printf("RAY_EVENT event=%s generation=%lu phase=%u samples=%lu pass=%u contrast=%u "
-           "x_q8=%ld z_q8=%ld cancellations=%lu ms=%lu aa_enabled=%u "
+           "x_q8=%ld y_q8=%ld z_q8=%ld cancellations=%lu ms=%lu idle_base_ms=%lu aa_enabled=%u "
            "yaw_mrad=%ld pitch_mrad=%ld roll_mrad=%ld\n", event,
            (unsigned long)session.generation, session.phase,
            (unsigned long)session.traced_samples, session.pass,
            session.contrast + 1u, (long)(session.camera.position.x * 256.0f),
+           (long)(session.camera.position.y * 256.0f),
            (long)(session.camera.position.z * 256.0f), (unsigned long)session.cancellations,
-           (unsigned long)ll_get_time_ms(), session.aa_enabled,
+           (unsigned long)ll_get_time_ms(), (unsigned long)session.last_motion_ms, session.aa_enabled,
            (long)(session.camera.yaw * 1000.0f),
            (long)(session.camera.pitch * 1000.0f),
            (long)(session.camera.roll * 1000.0f));
@@ -93,8 +96,8 @@ static void log_perf(const RayPerf *p) {
            "sphere_tests=%lu plane_tests=%lu camera_us=%lu intersect_us=%lu shadow_us=%lu shade_us=%lu "
            "reflection_us=%lu refraction=%lu refraction_us=%lu glass_exits=%lu tir_events=%lu floor_reflection=%lu "
            "stack_words=-1 preview_triangles=%lu preview_pixels=%lu hits=%lu "
-           "aa_enabled=%u aa_us=%lu aa_rows=%u aa_pixels=%lu aa_changed=%lu aa_batch_max_us=%lu "
-           "yaw_mrad=%ld pitch_mrad=%ld roll_mrad=%ld\n",
+           "aa_enabled=%u aa_us=%lu aa_rows=%u aa_pixels=%lu aa_changed=%lu aa_batch_max_us=%lu aa_edges=%lu aa_search_steps=%lu "
+           "x_q8=%ld y_q8=%ld z_q8=%ld yaw_mrad=%ld pitch_mrad=%ld roll_mrad=%ld\n",
            (unsigned long)session.generation, session.phase, session.pass,
            (unsigned long)session.traced_samples, p->batch_samples,
            (unsigned long)(ll_get_time_ms() - p->began_ms),
@@ -112,6 +115,10 @@ static void log_perf(const RayPerf *p) {
            (unsigned long)r->hits, session.aa_enabled, (unsigned long)post.aa_us,
            (unsigned)post.row, (unsigned long)post.pixels_processed, (unsigned long)post.pixels_changed,
            (unsigned long)post.batch_max_us,
+           (unsigned long)post.edge_pixels, (unsigned long)post.search_steps,
+           (long)(session.camera.position.x * 256.0f),
+           (long)(session.camera.position.y * 256.0f),
+           (long)(session.camera.position.z * 256.0f),
            (long)(session.camera.yaw * 1000.0f),
            (long)(session.camera.pitch * 1000.0f),
            (long)(session.camera.roll * 1000.0f));
@@ -133,10 +140,10 @@ static void ray_task(void *unused) {
     (void)unused;
     printf("RAY_BOOT phase=task_start width=%u height=%u pixels=%u session_bytes=%u "
            "framebuffer_bytes=%u renderer_heap_bytes=0 task_stack_bytes=8192 idle_ms=1000 batch_budget_us=6000 "
-           "cpu_mhz=%d detail_timing=1 reflection_timing_nested=1 refraction_timing_nested=1 scene=studio-v3 "
-           "aa_default=0 aa_method=edge-gray aa_scratch_bytes=768 post_state_bytes=%u\n",
+           "cpu_mhz=%d detail_timing=1 reflection_timing_nested=1 refraction_timing_nested=1 scene=studio-v4 "
+           "aa_default=0 aa_method=fxaa-gray-bounded aa_scratch_bytes=%u post_state_bytes=%u\n",
            RAY_WIDTH, RAY_HEIGHT, RAY_PIXELS, (unsigned)sizeof(session), RAY_PIXELS,
-           ll_get_cur_freq(), (unsigned)sizeof(post));
+           ll_get_cur_freq(), (unsigned)RAY_POST_CACHE_BYTES, (unsigned)sizeof(post));
     uint8_t *pixels = SystemUIBorrowFrameBuffer();
     if (!pixels) {
         printf("RAY_BOOT phase=framebuffer_error\n");

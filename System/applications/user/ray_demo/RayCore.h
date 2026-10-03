@@ -36,6 +36,9 @@ void Ray_SetClock(uint32_t (*clock_us)(void));
 uint32_t Ray_Clock(void);
 void RayCamera_Init(RayCamera *camera);
 int RayCamera_Move(RayCamera *camera, float distance, float turn);
+/* Vertical movement saturates at heights 0.20..8.0. A swept camera radius
+ * of 0.18 protects against sphere penetration; invalid inputs change nothing. */
+int RayCamera_Elevate(RayCamera *camera, float delta);
 /* Angles are radians. Pitch saturates at +/-80 degrees; yaw and roll wrap
  * into [-pi,pi]. Invalid input returns zero without changing the camera. */
 int RayCamera_Orient(RayCamera *camera, float yaw_delta, float pitch_delta,

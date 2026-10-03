@@ -52,7 +52,7 @@ DIAG_HEARTBEAT_RE = re.compile(
 )
 DIAG_STAGE_RE = re.compile(r"DOOM_DIAG_STAGE ([^\r\n]+)")
 RAY_LINE_RE = re.compile(r"(?m)^RAY_(BOOT|EVENT|PERF|EXIT)\b[^\r\n]*")
-RAY_FIELD_RE = re.compile(r"([a-z_]+)=([^\s]+)")
+RAY_FIELD_RE = re.compile(r"([a-z_][a-z0-9_]*)=([^\s]+)")
 
 
 def ray_state(raw):
@@ -116,7 +116,8 @@ def ray_state(raw):
         "progress_percent": round(min(samples / total, 1) * 100, 2) if total else 0,
         "contrast": context.get("contrast", boot.get("contrast")),
         "aa_enabled": context.get("aa_enabled", boot.get("aa_default")),
-        **{key: context.get(key) for key in ("yaw_mrad", "pitch_mrad", "roll_mrad")},
+        "aa_method": boot.get("aa_method"),
+        **{key: context.get(key) for key in ("x_q8", "y_q8", "z_q8", "yaw_mrad", "pitch_mrad", "roll_mrad")},
         "elapsed_ms": completed_elapsed_ms if completed_elapsed_ms is not None else
                       perf.get("elapsed_ms") if perf else None,
         **{key: perf.get(key) if perf else None for key in (
@@ -124,6 +125,7 @@ def ray_state(raw):
             "primary", "reflection", "refraction", "shadow", "sphere_tests", "plane_tests",
             "glass_exits", "tir_events", "floor_reflection",
             "aa_us", "aa_rows", "aa_pixels", "aa_changed", "aa_batch_max_us",
+            "aa_edges", "aa_search_steps",
             "camera_us", "intersect_us", "shadow_us", "shade_us", "reflection_us", "refraction_us", "stack_words")},
         "exit_phases": exits, "raw": perf, "boot": boot,
     }, packets[-1].start()

@@ -435,21 +435,25 @@ class DashboardStateTest(unittest.TestCase):
         self.assertEqual(self.read(new_launch)["ray"]["elapsed_ms"], 88)
 
     def test_ray_post_aa_phase_timing_toggle_and_camera(self):
-        boot = "RAY_BOOT phase=task_start pixels=32512 aa_default=0\n"
+        boot = "RAY_BOOT phase=task_start pixels=32512 aa_default=0 aa_method=fxaa-gray-bounded\n"
         legacy = self.read("RAY_BOOT phase=task_start pixels=32512\n")
         self.assertIsNone(legacy["ray"]["aa_enabled"])
         log = boot + ("RAY_EVENT event=aa_toggle generation=2 phase=1 aa_enabled=1 "
-                      "pitch_mrad=300 roll_mrad=-200 yaw_mrad=0\n"
+                      "pitch_mrad=300 roll_mrad=-200 yaw_mrad=0 x_q8=-64 y_q8=1024 z_q8=256\n"
                       "RAY_EVENT event=aa_start generation=2 phase=4 samples=32512 aa_enabled=1\n"
                       "RAY_PERF generation=2 phase=4 samples=32512 elapsed_ms=12000 "
-                      "aa_us=2200 aa_rows=4 aa_pixels=1024 aa_changed=45 aa_batch_max_us=900\n")
+                      "aa_us=2200 aa_rows=4 aa_pixels=1024 aa_changed=45 aa_batch_max_us=900 aa_edges=88 aa_search_steps=700\n")
         s = self.read(log)
         self.assertEqual(s["stage"], "Ray 抗锯齿处理中")
         self.assertEqual(s["ray"]["aa_enabled"], 1)
         self.assertEqual(s["ray"]["pitch_mrad"], 300)
         self.assertEqual(s["ray"]["roll_mrad"], -200)
+        self.assertEqual(s["ray"]["y_q8"], 1024)
+        self.assertEqual(s["ray"]["aa_method"], "fxaa-gray-bounded")
         self.assertEqual(s["ray"]["aa_us"], 2200)
         self.assertEqual(s["ray"]["aa_changed"], 45)
+        self.assertEqual(s["ray"]["aa_edges"], 88)
+        self.assertEqual(s["ray"]["aa_search_steps"], 700)
         self.assertEqual(s["ray"]["elapsed_ms"], 12000)
         log += ("RAY_PERF generation=2 phase=3 samples=32512 elapsed_ms=12345 "
                 "aa_us=7000 aa_rows=127 aa_pixels=32512 aa_changed=500 aa_batch_max_us=900\n"
