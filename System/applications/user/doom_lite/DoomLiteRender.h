@@ -53,6 +53,7 @@ const DoomLiteRenderStats *DoomLite_GetRenderStats(void);
 /* Static writable caches only; excludes the borrowed LCD framebuffer. */
 unsigned DoomLite_RenderWorkingSetBytes(void);
 unsigned DoomLite_WorldReadonlyBytes(void);
+unsigned DoomLite_SpriteReadonlyBytes(void);
 /* Supply the same monotonic microsecond clock used by the game task.
  * Only phase boundaries are sampled; no calls inside pixel loops. */
 void DoomLite_SetRenderClock(uint32_t (*clock_us)(void));

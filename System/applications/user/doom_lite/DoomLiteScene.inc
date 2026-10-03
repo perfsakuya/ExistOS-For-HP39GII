@@ -62,6 +62,12 @@ unsigned DoomLite_RenderWorkingSetBytes(void) {
                       );
 }
 
+unsigned DoomLite_SpriteReadonlyBytes(void) {
+    return (unsigned)(GAME_SPRITE_BYTES + sizeof(game_sprite_gray) +
+        sizeof(game_sprites) + sizeof(game_sprite_sequences) +
+        sizeof(game_key_types) + sizeof(game_key_sprites) + sizeof(game_static_sprites));
+}
+
 static uint8_t game_gray(uint8_t color, uint8_t contrast) {
     /* Keep highlights light, while the stronger mode gives mortar and actor
      * silhouettes more separation. No extra framebuffer or second pass. */
@@ -713,11 +719,21 @@ void DoomLite_RenderGameScene(uint8_t *pixels, const DoomLiteGame *game) {
     game_wall_ready = 1u;
 }
 
-static int game_sprite_for_actor(uint16_t type, unsigned state, unsigned frame) {
+static unsigned game_sprite_rotation(const DoomLiteGame *game, const DoomLiteVisual *visual) {
+    /* WAD rotation 1 is the actor's front. Select from the actor-to-viewer
+     * vector, independent of the player's look direction. Equivalent to the
+     * original Doom R_ProjectSprite nearest-octant rule, with integer math. */
+    return DoomLiteGame_Direction8(game->x_q8 - visual->x_q8,
+                                  game->y_q8 - visual->y_q8, visual->facing);
+}
+
+static int game_sprite_for_actor(uint16_t type, unsigned state, unsigned frame,
+                                 unsigned rotation) {
     if (type == 58u) type = 3002u;
     for (unsigned i = 0; i < 4u; ++i) {
         const GameSpriteSequence *sequence = &game_sprite_sequences[i];
         if (sequence->thing_type != type) continue;
+        if (!sequence->count[state < 4u ? state : 3u]) return -1;
         if (state >= 4u) {
             state = 3u;
             frame = sequence->count[state] - 1u;
@@ -725,7 +741,7 @@ static int game_sprite_for_actor(uint16_t type, unsigned state, unsigned frame) 
         if (state == 3u && frame >= sequence->count[state])
             frame = sequence->count[state] - 1u;
         else frame %= sequence->count[state];
-        return sequence->frame[state][frame];
+        return sequence->frame[state][frame][rotation & 7u];
     }
     return -1;
 }
@@ -744,14 +760,24 @@ static int game_sprite_for_item(uint16_t type) {
 typedef struct {
     uint16_t depth;
     int16_t left, top;
-    uint8_t width, height, texture, spectre;
+    uint16_t texture;
+    uint8_t width, height, spectre, flip;
 } AnimatedGameSprite;
+
+static unsigned game_sprite_source_x(const AnimatedGameSprite *sprite,
+                                    const GameSpriteAsset *asset, unsigned x) {
+    const unsigned source = x * asset->width / sprite->width;
+    return sprite->flip ? asset->width - 1u - source : source;
+}
 
 static void game_queue_sprite(AnimatedGameSprite sprites[LITE_SPRITE_LIMIT],
                               unsigned *count, const DoomLiteGame *game,
                               int32_t x, int32_t y, uint16_t sector, int eye,
                               int texture, int spectre) {
-    if (texture < 0 || texture >= (int)GAME_SPRITE_COUNT) return;
+    if (texture < 0) return;
+    const unsigned flip = ((unsigned)texture & GAME_SPRITE_FLIP) != 0u;
+    texture &= GAME_SPRITE_INDEX_MASK;
+    if (texture >= (int)GAME_SPRITE_COUNT) return;
     ++game_render_stats.sprite_candidates;
     const int32_t dx = x / 256 - game->x_q8 / 256;
     const int32_t dy = y / 256 - game->y_q8 / 256;
@@ -775,7 +801,11 @@ static void game_queue_sprite(AnimatedGameSprite sprites[LITE_SPRITE_LIMIT],
     }
     if (height > 126) { width = width * 126 / height; height = 126; }
     if (width < 1) width = 1;
-    const int left = center - asset->left * width / asset->world_width;
+    /* A mirrored patch reflects its origin as well as its texels. WAD patch
+     * offsets are not necessarily half the width, so centering only the
+     * unmirrored offset makes paired directions jump sideways. */
+    const int left_offset = flip ? (int)asset->world_width - asset->left : asset->left;
+    const int left = center - left_offset * width / asset->world_width;
     const int base = game_project_y(DoomLiteGame_FloorHeight(game, sector), eye, (unsigned)depth);
     const int top = base - asset->top * height / asset->world_height;
     if (left + width <= 0 || left >= LITE_W || top + height <= 0 ||
@@ -791,10 +821,10 @@ static void game_queue_sprite(AnimatedGameSprite sprites[LITE_SPRITE_LIMIT],
     while (at && sprites[at - 1u].depth < depth) {
         sprites[at] = sprites[at - 1u]; --at;
     }
-    sprites[at] = (AnimatedGameSprite){(uint16_t)depth, (int16_t)left,
-                                     (int16_t)top, (uint8_t)width,
-                                     (uint8_t)height, (uint8_t)texture,
-                                     (uint8_t)spectre};
+    sprites[at] = (AnimatedGameSprite){.depth = (uint16_t)depth, .left = (int16_t)left,
+                                     .top = (int16_t)top, .texture = (uint16_t)texture,
+                                     .width = (uint8_t)width, .height = (uint8_t)height,
+                                     .spectre = (uint8_t)spectre, .flip = (uint8_t)flip};
 }
 
 void DoomLite_RenderGameThings(uint8_t *pixels, const DoomLiteGame *game) {
@@ -805,7 +835,8 @@ void DoomLite_RenderGameThings(uint8_t *pixels, const DoomLiteGame *game) {
     for (unsigned i = 0; i < DoomLiteGame_VisualCount(game); ++i) {
         DoomLiteVisual visual;
         if (!DoomLiteGame_GetVisual(game, i, &visual)) continue;
-        const int texture = game_sprite_for_actor(visual.thing_type, visual.state, visual.frame);
+        const int texture = game_sprite_for_actor(visual.thing_type, visual.state, visual.frame,
+                                                 game_sprite_rotation(game, &visual));
         game_queue_sprite(sprites, &count, game, visual.x_q8, visual.y_q8,
                            visual.sector, eye, texture,
                            visual.thing_type == 58u);
@@ -828,7 +859,8 @@ void DoomLite_RenderGameThings(uint8_t *pixels, const DoomLiteGame *game) {
             ? sprite->top + sprite->height : (int)DOOM_GAME_VIEW_H;
         uint8_t source_x[GAME_SPRITE_MAX_WIDTH];
         for (int x = first_x; x < last_x; ++x)
-            source_x[x - sprite->left] = (uint8_t)((x - sprite->left) * asset->width / sprite->width);
+            source_x[x - sprite->left] = (uint8_t)game_sprite_source_x(sprite, asset,
+                                                                    (unsigned)(x - sprite->left));
         const unsigned step_y = ((unsigned)asset->height << 16) / sprite->height;
         unsigned source_y = (unsigned)(first_y - sprite->top) * step_y;
         for (int y = first_y; y < last_y; ++y, source_y += step_y) {

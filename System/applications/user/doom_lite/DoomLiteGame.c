@@ -26,6 +26,25 @@ static int sine_q14(uint8_t a) {
     if(q==2u) return -sine_table[i];
     return -sine_table[64u-i];
 }
+unsigned DoomLiteGame_Direction8(int32_t dx,int32_t dy,uint8_t facing) {
+    if(!dx&&!dy) return 0u;
+    const int32_t cosine=sine_q14((uint8_t)(facing+64u)),sine=sine_q14(facing);
+    const int64_t forward=(int64_t)dx*cosine+(int64_t)dy*sine;
+    const int64_t side=(int64_t)dy*cosine-(int64_t)dx*sine;
+    int64_t x,y;unsigned quadrant;
+    if(forward>=0) {
+        if(side>=0) {x=forward;y=side;quadrant=0u;}
+        else {x=-side;y=forward;quadrant=6u;}
+    } else {
+        if(side>=0) {x=side;y=-forward;quadrant=2u;}
+        else {x=-forward;y=-side;quadrant=4u;}
+    }
+    /* sin/cos(22.5 degrees), Q14. Comparing cross products avoids atan,
+     * floating point, division, and a per-actor lookup table. */
+    const unsigned octant=y*15137 < x*6270 ? 0u :
+                          y*6270 < x*15137 ? 1u : 2u;
+    return (quadrant+octant)&7u;
+}
 static int32_t fdiv(int32_t n,int32_t d) { return n>=0?n/d:(n+1)/d-1; }
 static int32_t absi(int32_t n) { return n<0?-n:n; }
 static int64_t sq(int32_t n) { return (int64_t)n*n; }
@@ -217,7 +236,7 @@ unsigned DoomLiteGame_VisualCount(const DoomLiteGame *g) { return g?g->actor_cou
 int DoomLiteGame_GetVisual(const DoomLiteGame *g,unsigned i,DoomLiteVisual *v) {
     if(!g||!v||i>=g->actor_count) return 0;
     const DoomLiteActor *a=&g->actors[i];
-    *v=(DoomLiteVisual){a->x_q8,a->y_q8,g->map->things[a->thing_index].type,a->sector,a->state,a->frame};return 1;
+    *v=(DoomLiteVisual){a->x_q8,a->y_q8,g->map->things[a->thing_index].type,a->sector,a->state,a->frame,a->facing};return 1;
 }
 int DoomLiteGame_InitMap(DoomLiteGame *g,unsigned index) {
     if(!g) return 0;
@@ -603,6 +622,7 @@ static uint32_t ai_step(DoomLiteGame *g) {
         unsigned type=g->map->things[a->thing_index].type;
         unsigned reach=(type==3002u||type==58u)?48u:256u;
         if(!a->cooldown&&sq(dx)+sq(dy)<(int64_t)reach*reach&&sight(g,ax,ay,px,py,eye)) {
+            if(dx||dy) a->facing=(uint8_t)(DoomLiteGame_Direction8(dx,dy,0u)*32u);
             actor_state(g,a,DL_ACTOR_ATTACK);
             a->cooldown=(uint8_t)(type==3001u?49u:type==3002u||type==58u?28u:35u+index%9u);
             events|=hurt_player(g,type==3002u||type==58u?7u:type==3001u?6u:4u);
@@ -615,6 +635,7 @@ static uint32_t ai_step(DoomLiteGame *g) {
         int units=(type==3002u||type==58u)?(int)stride*2:(int)stride;
         if(units>16) units=16;
         int32_t mx=(int32_t)((int64_t)dx*units*256/span),my=(int32_t)((int64_t)dy*units*256/span);
+        const int32_t old_x=a->x_q8,old_y=a->y_q8;
         int moved=0;
         if(!actor_position_blocked(g,index,a->x_q8+mx,a->y_q8)) {a->x_q8+=mx;moved=1;}
         if(!actor_position_blocked(g,index,a->x_q8,a->y_q8+my)) {a->y_q8+=my;moved=1;}
@@ -627,7 +648,10 @@ static uint32_t ai_step(DoomLiteGame *g) {
                 if(!actor_position_blocked(g,index,a->x_q8,a->y_q8+side)) {a->y_q8+=side;moved=1;}
             } else if(!actor_position_blocked(g,index,a->x_q8+side,a->y_q8)) {a->x_q8+=side;moved=1;}
         }
-        if(moved) {a->sector=DoomMap_SectorAt(g->map,fdiv(a->x_q8,256),fdiv(a->y_q8,256));++g->metrics.actor_moves;}
+        if(moved) {
+            a->facing=(uint8_t)(DoomLiteGame_Direction8(a->x_q8-old_x,a->y_q8-old_y,0u)*32u);
+            a->sector=DoomMap_SectorAt(g->map,fdiv(a->x_q8,256),fdiv(a->y_q8,256));++g->metrics.actor_moves;
+        }
         /* Simple wall sliding, not A* or original eight-direction chase.
          * No route search is allowed to consume an unbounded frame. */
     }

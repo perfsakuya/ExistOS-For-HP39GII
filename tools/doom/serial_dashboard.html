@@ -123,7 +123,7 @@ async function refresh() {
         : `${label} —`;
     }
     byId('gamefixed').textContent = s.game_resources
-      ? `固定状态 ${s.game_resources.state_kb} KB · 固定渲染缓存 ${s.game_resources.render_kb} KB · 世界只读资源 ${s.game_world_kb ?? '—'} KB · 共用 LCD 帧缓冲（不计入 malloc 曲线）` : 'Game 固定内存 —';
+      ? `固定状态 ${s.game_resources.state_kb} KB · 固定渲染缓存 ${s.game_resources.render_kb} KB · 世界只读资源 ${s.game_world_kb ?? '—'} KB · 精灵只读资源 ${s.game_sprite_kb ?? '—'} KB · 共用 LCD 帧缓冲（不计入 malloc 曲线）` : 'Game 固定内存 —';
     byId('gamepool').textContent = counters
       ? `怪物峰值 ${counters.actor_peak ?? '—'}/128 · 门/平台峰值 ${counters.mover_peak ?? '—'}/64 · 溢出 ${counters.overflows ?? '—'}` : 'Game 固定容量 —';
     byId('gamerays').textContent = counters && counters.frames

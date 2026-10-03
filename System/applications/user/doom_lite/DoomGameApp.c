@@ -212,14 +212,14 @@ static void doom_game_task(void *unused) {
     const uint32_t init_start_us = ll_get_time_us();
     DoomLiteGame_Init(&game_state);
     printf("DOOMG_BOOT phase=game_init ms=%lu duration_us=%lu level=1 state_bytes=%u render_bytes=%u "
-           "x=%ld y=%ld hp=%u ammo=%u enemies=%u world_bytes=%u\n",
+           "x=%ld y=%ld hp=%u ammo=%u enemies=%u world_bytes=%u sprite_bytes=%u\n",
            (unsigned long)ll_get_time_ms(),
            (unsigned long)(ll_get_time_us() - init_start_us),
            (unsigned)sizeof(game_state),
            DoomLite_RenderWorkingSetBytes(),
            (long)(game_state.x_q8 >> 8), (long)(game_state.y_q8 >> 8),
            (unsigned)game_state.health, (unsigned)game_state.ammo,
-           (unsigned)game_state.total_enemies, DoomLite_WorldReadonlyBytes());
+           (unsigned)game_state.total_enemies, DoomLite_WorldReadonlyBytes(), DoomLite_SpriteReadonlyBytes());
 
     while (ll_vm_check_key() >> 16) vTaskDelay(pdMS_TO_TICKS(20));
     printf("DOOMG_BOOT phase=ready ms=%lu\n",

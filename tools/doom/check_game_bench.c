@@ -57,9 +57,9 @@ int main(int argc, char **argv) {
     DoomLite_SetRenderClock(clock_us);
     memset(guarded, 0xa5, sizeof(guarded));
     const char *directory = argc > 1 ? argv[1] : NULL;
-    printf("BENCH_META host_only=1 state_bytes=%zu actor_bytes=%zu mover_bytes=%zu samples=%u render_bytes=%u world_bytes=%u\n",
+    printf("BENCH_META host_only=1 state_bytes=%zu actor_bytes=%zu mover_bytes=%zu samples=%u render_bytes=%u world_bytes=%u sprite_bytes=%u\n",
            sizeof(game), sizeof(DoomLiteActor), sizeof(DoomLiteMover), SAMPLES,
-           DoomLite_RenderWorkingSetBytes(), DoomLite_WorldReadonlyBytes());
+           DoomLite_RenderWorkingSetBytes(), DoomLite_WorldReadonlyBytes(), DoomLite_SpriteReadonlyBytes());
     for (unsigned level = 0; level < DOOM_MAP_COUNT; ++level) {
         for (unsigned mode = 0; mode < 4u; ++mode) {
             if (mode == 3u && level != 0u) continue;

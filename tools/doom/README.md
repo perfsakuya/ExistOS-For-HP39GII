@@ -5,13 +5,23 @@
 `Game` uses standard Freedoom 0.13.0 E1M1/E1M2, without embedding a complete
 IWAD or linking the legacy GBADoom engine. `build_game_maps.py` emits
 immutable geometry/BSP/sparse collision/tag/neighbor tables;
-`build_game_sprites.py` emits 69 packed grayscale patches for actor animation
-and pickups. `build_game_world.py` composes the original PNAMES/TEXTURE1/2
+`build_game_sprites.py` emits 210 packed grayscale patches (124,785 pixel bytes)
+for eight-direction actor animation and pickups. `build_game_world.py` composes the original PNAMES/TEXTURE1/2
 patches and flats into 198 wall and 87 plane materials. It preserves sidedef
 offsets, both line sides, original texture dimensions and sector assignments.
 All three generators verify the pinned IWAD hash and support `--check`.
 They default to `../Freedoom-research/extracted/freedoom-0.13.0/freedoom1.wad`.
 The normal ARM build uses the generated headers and does not need the IWAD.
+
+Alive walking, attack and pain states retain all eight WAD rotations; death
+and corpse frames remain unrotated. Packed 16-bit frame references contain the
+asset index and horizontal-flip flag. The renderer mirrors both sampling and
+the original left anchor. Actor facing is initialized from the map and updated
+by movement/aiming; fixed-point relative view direction selects the frame.
+`check_game_directions.c` checks direction boundaries, animation references,
+mirrored raster/anchors, AI facing and bounded drawing. `DoomLite_SpriteReadonlyBytes`
+reports the ARM object payload (129,221 bytes, excluding linker alignment),
+and `DOOMG_BOOT sprite_bytes` exposes it in the dashboard without a decoded heap.
 
 ```powershell
 python tools/doom/run_game_checks.py --cc D:/w64devkit/bin/gcc.exe

@@ -332,6 +332,8 @@ def state():
         } for line in reversed(game_boot) if "state_bytes=" in line and "render_bytes=" in line), None),
         "game_world_kb": next((round(fields(line)["world_bytes"] / 1024, 2)
                                for line in reversed(game_boot) if "world_bytes=" in line), None),
+        "game_sprite_kb": next((round(fields(line)["sprite_bytes"] / 1024, 2)
+                                for line in reversed(game_boot) if "sprite_bytes=" in line), None),
         "game_detail": {
             "span_active_kb": round(game_detail["span_total_bytes"] /
                                     (game_detail["frames"] * 1024), 2)

@@ -63,6 +63,7 @@ def main() -> None:
         "lite-rays": (["tools/doom/check_lite_rays.c", *shared], []),
         "renderer": (["tools/doom/check_game_renderer.c", *shared], [str(output)]),
         "world-render": (["tools/doom/check_game_world_render.c", *shared], []),
+        "directions": (["tools/doom/check_game_directions.c", *shared], [str(output)]),
         "platform": (["tools/doom/check_game_platform.c", *shared], [str(output)]),
         "viewport": (["tools/doom/check_game_viewport.c", str(MODULE / "DoomLite.c"),
                       *shared, str(MODULE / "DoomLiteHud.c")], [str(output)]),

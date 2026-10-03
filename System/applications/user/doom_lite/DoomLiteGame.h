@@ -49,7 +49,7 @@ typedef struct {
 typedef struct {
     int32_t x_q8, y_q8;
     uint16_t thing_type, sector;
-    uint8_t state, frame;
+    uint8_t state, frame, facing;
 } DoomLiteVisual;
 typedef struct { int16_t floor, ceiling; uint16_t special; } DoomLiteSectorState;
 typedef struct {
@@ -99,6 +99,10 @@ int DoomLiteGame_IsSolid(const DoomLiteGame *game, int32_t x_q8, int32_t y_q8);
 int DoomLiteGame_ThingActive(const DoomLiteGame *game, unsigned thing_index);
 unsigned DoomLiteGame_VisualCount(const DoomLiteGame *game);
 int DoomLiteGame_GetVisual(const DoomLiteGame *game, unsigned index, DoomLiteVisual *visual);
+/* Nearest counterclockwise octant of a vector relative to a heading. Heading
+ * uses 256 steps per turn; an exact half-octant selects the following sector.
+ * The zero vector has no direction and returns the forward octant. */
+unsigned DoomLiteGame_Direction8(int32_t dx, int32_t dy, uint8_t facing);
 uint16_t DoomLiteGame_PlayerSector(const DoomLiteGame *game);
 int DoomLiteGame_FloorHeight(const DoomLiteGame *game, uint16_t sector);
 int DoomLiteGame_CeilingHeight(const DoomLiteGame *game, uint16_t sector);

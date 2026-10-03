@@ -215,7 +215,7 @@ class DashboardStateTest(unittest.TestCase):
 
     def test_two_levels_details_and_packet_boundaries(self):
         boot = ("DOOMG_BOOT phase=task_start ms=1000\n"
-                "DOOMG_BOOT phase=game_init state_bytes=7220 render_bytes=9381 world_bytes=218116\n")
+                "DOOMG_BOOT phase=game_init state_bytes=7220 render_bytes=9381 world_bytes=218116 sprite_bytes=129221\n")
         perf = (
             "DOOMG_PERF frames=32 elapsed_ms=1600 logic_ticks=56 "
             "logic_total_ms=112 logic_max_ms=4 render_total_ms=800 render_max_ms=30 "
@@ -238,6 +238,8 @@ class DashboardStateTest(unittest.TestCase):
         self.assertEqual(s["starts"], 1)
         self.assertEqual(s["game_resources"], {"state_kb": 7.05, "render_kb": 9.16})
         self.assertEqual(s["game_world_kb"], 213.0)
+        self.assertEqual(s["game_sprite_kb"], 126.19)
+        self.assertIsNone(self.read(boot.replace(" sprite_bytes=129221", "") + perf)["game_sprite_kb"])
         self.assertEqual(s["latest_frame"], 96)
         self.assertEqual(s["game"]["armor"], 100)
         self.assertTrue(s["game"]["red_key"])
