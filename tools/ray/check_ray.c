@@ -74,7 +74,62 @@ static void trace_direct(const RayCamera *camera, unsigned contrast,
 }
 static int no_trace_stats(const RayStats *stats) {
     return !stats->primary_rays && !stats->reflection_rays && !stats->shadow_rays &&
+           !stats->refraction_rays && !stats->glass_exits && !stats->tir_events &&
+           !stats->floor_reflection_rays && !stats->refraction_us &&
            !stats->sphere_tests && !stats->plane_tests && !stats->hits;
+}
+
+static int unit_finite(RayVec3 direction) {
+    return isfinite(direction.x) && isfinite(direction.y) && isfinite(direction.z) &&
+           fabsf(direction.x * direction.x + direction.y * direction.y +
+                 direction.z * direction.z - 1.0f) < 0.0001f;
+}
+
+static int check_refraction(void) {
+    const RayVec3 normal = {0.0f, 1.0f, 0.0f};
+    const RayVec3 incident = {0.0f, -1.0f, 0.0f};
+    const RayVec3 sentinel = {7.0f, 8.0f, 9.0f};
+    RayVec3 result, reciprocal;
+    REQUIRE(Ray_RefractDirection(incident, normal, 1.0f / 1.5f, &result));
+    REQUIRE(unit_finite(result));
+    REQUIRE(fabsf(result.x) < 0.00001f && fabsf(result.y + 1.0f) < 0.00001f &&
+            fabsf(result.z) < 0.00001f);
+    /* sin(theta_t) = eta * sin(theta_i), with theta_i = 30 degrees. */
+    const RayVec3 angled = {0.5f, -0.866025404f, 0.0f};
+    REQUIRE(Ray_RefractDirection(angled, normal, 1.0f / 1.5f, &result));
+    REQUIRE(unit_finite(result));
+    REQUIRE(fabsf(result.x - 1.0f / 3.0f) < 0.00001f);
+    REQUIRE(fabsf(result.y + sqrtf(8.0f / 9.0f)) < 0.00001f && fabsf(result.z) < 0.00001f);
+    REQUIRE(Ray_RefractDirection(result, normal, 1.5f, &reciprocal));
+    REQUIRE(unit_finite(reciprocal));
+    REQUIRE(fabsf(reciprocal.x - angled.x) < 0.00001f &&
+            fabsf(reciprocal.y - angled.y) < 0.00001f);
+    /* Glass-to-air critical sine is 1/1.5: bracket its two sides. */
+    const RayVec3 below_critical = {0.665f, -sqrtf(1.0f - 0.665f * 0.665f), 0.0f};
+    const RayVec3 above_critical = {0.668f, -sqrtf(1.0f - 0.668f * 0.668f), 0.0f};
+    REQUIRE(Ray_RefractDirection(below_critical, normal, 1.5f, &result));
+    REQUIRE(unit_finite(result));
+    result = sentinel;
+    REQUIRE(!Ray_RefractDirection(above_critical, normal, 1.5f, &result));
+    REQUIRE(memcmp(&result, &sentinel, sizeof(result)) == 0);
+    const RayVec3 invalid_vectors[] = {{0.0f, 0.0f, 0.0f}, {NAN, -1.0f, 0.0f},
+                                      {0.0f, -INFINITY, 0.0f}};
+    for (unsigned i = 0; i < sizeof(invalid_vectors) / sizeof(invalid_vectors[0]); ++i) {
+        result = sentinel;
+        REQUIRE(!Ray_RefractDirection(invalid_vectors[i], normal, 1.0f / 1.5f, &result));
+        REQUIRE(memcmp(&result, &sentinel, sizeof(result)) == 0);
+        REQUIRE(!Ray_RefractDirection(incident, invalid_vectors[i], 1.0f / 1.5f, &result));
+        REQUIRE(memcmp(&result, &sentinel, sizeof(result)) == 0);
+    }
+    const float invalid_ratios[] = {0.0f, -1.0f, NAN, INFINITY};
+    for (unsigned i = 0; i < sizeof(invalid_ratios) / sizeof(invalid_ratios[0]); ++i) {
+        result = sentinel;
+        REQUIRE(!Ray_RefractDirection(incident, normal, invalid_ratios[i], &result));
+        REQUIRE(memcmp(&result, &sentinel, sizeof(result)) == 0);
+    }
+    REQUIRE(!Ray_RefractDirection(incident, normal, 1.0f / 1.5f, NULL));
+    puts("CHECK_PASS refraction_normal_snell_reciprocity_critical_angle_tir_invalid_inputs");
+    return 0;
 }
 
 static int check_core(const char *directory) {
@@ -88,6 +143,7 @@ static int check_core(const char *directory) {
         trace_direct(&camera, c, direct, &stats);
         REQUIRE(stats.primary_rays == RAY_PIXELS);
         REQUIRE(stats.reflection_rays > 0u && stats.shadow_rays > 0u);
+        REQUIRE(stats.refraction_rays > 0u && stats.glass_exits > 0u && stats.floor_reflection_rays > 0u);
         REQUIRE(stats.sphere_tests > RAY_PIXELS && stats.plane_tests >= RAY_PIXELS);
         trace_direct(&camera, c, again, &unused);
         REQUIRE(memcmp(direct, again, RAY_PIXELS) == 0);
@@ -289,7 +345,7 @@ static int check_progressive(void) {
 int main(int argc, char **argv) {
     if (argc != 2) { fprintf(stderr, "usage: check_ray output_directory\n"); return 2; }
     Ray_SetClock(NULL);
-    if (check_core(argv[1]) || check_preview(argv[1]) || check_movement() ||
+    if (check_refraction() || check_core(argv[1]) || check_preview(argv[1]) || check_movement() ||
         check_deadline_and_controls() || check_cancellation_and_budget() || check_progressive()) return 1;
     puts("CHECK_PASS all_host_ray_checks; physical_exit_and_ARM_timing_require_hardware");
     return 0;

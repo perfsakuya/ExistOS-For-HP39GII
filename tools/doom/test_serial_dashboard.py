@@ -434,6 +434,41 @@ class DashboardStateTest(unittest.TestCase):
         new_launch += "RAY_PERF generation=7 phase=2 samples=128 elapsed_ms=88\n"
         self.assertEqual(self.read(new_launch)["ray"]["elapsed_ms"], 88)
 
+    def test_ray_optional_refraction_fields_preserve_legacy_and_completed_elapsed(self):
+        boot = "RAY_BOOT phase=task_start pixels=32512\n"
+        legacy = boot + "RAY_PERF generation=1 phase=2 samples=2048 elapsed_ms=300 primary=2048 reflection=300\n"
+        s = self.read(legacy)
+        for key in ("refraction", "refraction_us", "glass_exits", "tir_events", "floor_reflection"):
+            self.assertIsNone(s["ray"][key])
+        self.assertEqual(s["ray"]["reflection"], 300)
+        modern = legacy + ("RAY_PERF generation=1 phase=3 samples=32512 elapsed_ms=1234 "
+                           "primary=32512 reflection=4000 refraction=321 refraction_us=12345 "
+                           "glass_exits=120 tir_events=3 floor_reflection=5000\n"
+                           "RAY_PERF generation=1 phase=3 samples=32512 elapsed_ms=9000 "
+                           "primary=32512 reflection=4000 refraction=321 refraction_us=12345 "
+                           "glass_exits=120 tir_events=3 floor_reflection=5000\n")
+        s = self.read(modern)
+        self.assertEqual(s["ray"]["refraction"], 321)
+        self.assertEqual(s["ray"]["refraction_us"], 12345)
+        self.assertEqual(s["ray"]["raw"]["refraction"], 321)
+        for key, value in (("glass_exits", 120), ("tir_events", 3), ("floor_reflection", 5000)):
+            self.assertEqual(s["ray"][key], value)
+            self.assertEqual(s["ray"]["raw"][key], value)
+        self.assertEqual(s["ray"]["elapsed_ms"], 1234)
+        self.assertEqual(s["ray"]["raw"]["elapsed_ms"], 9000)
+        cancelled = modern + "RAY_EVENT event=cancel generation=2 phase=0 samples=0\n"
+        s = self.read(cancelled)
+        for key in ("refraction", "refraction_us", "glass_exits", "tir_events", "floor_reflection"):
+            self.assertIsNone(s["ray"][key])
+        self.assertIsNone(s["ray"]["elapsed_ms"])
+        zero = cancelled + ("RAY_PERF generation=2 phase=0 samples=0 refraction=0 refraction_us=0 "
+                            "glass_exits=0 tir_events=0 floor_reflection=0\n")
+        s = self.read(zero)
+        self.assertEqual(s["ray"]["refraction"], 0)
+        self.assertEqual(s["ray"]["refraction_us"], 0)
+        for key in ("glass_exits", "tir_events", "floor_reflection"):
+            self.assertEqual(s["ray"][key], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -41,11 +41,12 @@ static unsigned buttons_for(uint16_t key) {
 
 static void log_event(const char *event) {
     printf("RAY_EVENT event=%s generation=%lu phase=%u samples=%lu pass=%u contrast=%u "
-           "x_q8=%ld z_q8=%ld cancellations=%lu\n", event,
+           "x_q8=%ld z_q8=%ld cancellations=%lu ms=%lu\n", event,
            (unsigned long)session.generation, session.phase,
            (unsigned long)session.traced_samples, session.pass,
            session.contrast + 1u, (long)(session.camera.position.x * 256.0f),
-           (long)(session.camera.position.z * 256.0f), (unsigned long)session.cancellations);
+           (long)(session.camera.position.z * 256.0f), (unsigned long)session.cancellations,
+           (unsigned long)ll_get_time_ms());
 }
 
 static void log_perf(const RayPerf *p) {
@@ -53,7 +54,8 @@ static void log_perf(const RayPerf *p) {
     printf("RAY_PERF generation=%lu phase=%u pass=%u samples=%lu batch_samples=%u elapsed_ms=%lu "
            "trace_us=%lu preview_us=%lu lcd_us=%lu batch_max_us=%lu primary=%lu reflection=%lu shadow=%lu "
            "sphere_tests=%lu plane_tests=%lu camera_us=%lu intersect_us=%lu shadow_us=%lu shade_us=%lu "
-           "reflection_us=%lu stack_words=-1 preview_triangles=%lu preview_pixels=%lu hits=%lu\n",
+           "reflection_us=%lu refraction=%lu refraction_us=%lu glass_exits=%lu tir_events=%lu floor_reflection=%lu "
+           "stack_words=-1 preview_triangles=%lu preview_pixels=%lu hits=%lu\n",
            (unsigned long)session.generation, session.phase, session.pass,
            (unsigned long)session.traced_samples, p->batch_samples,
            (unsigned long)(ll_get_time_ms() - p->began_ms),
@@ -64,6 +66,9 @@ static void log_perf(const RayPerf *p) {
            (unsigned long)r->plane_tests, (unsigned long)r->camera_us,
            (unsigned long)r->intersect_us, (unsigned long)r->shadow_us,
            (unsigned long)r->shade_us, (unsigned long)r->reflection_us,
+           (unsigned long)r->refraction_rays, (unsigned long)r->refraction_us,
+           (unsigned long)r->glass_exits, (unsigned long)r->tir_events,
+           (unsigned long)r->floor_reflection_rays,
            (unsigned long)r->preview_triangles, (unsigned long)r->preview_pixels,
            (unsigned long)r->hits);
 }
@@ -84,7 +89,7 @@ static void ray_task(void *unused) {
     (void)unused;
     printf("RAY_BOOT phase=task_start width=%u height=%u pixels=%u session_bytes=%u "
            "framebuffer_bytes=%u renderer_heap_bytes=0 task_stack_bytes=8192 idle_ms=1000 batch_budget_us=6000 "
-           "cpu_mhz=%d detail_timing=1 reflection_timing_nested=1\n",
+           "cpu_mhz=%d detail_timing=1 reflection_timing_nested=1 refraction_timing_nested=1 scene=studio-v2\n",
            RAY_WIDTH, RAY_HEIGHT, RAY_PIXELS, (unsigned)sizeof(session), RAY_PIXELS,
            ll_get_cur_freq());
     uint8_t *pixels = SystemUIBorrowFrameBuffer();

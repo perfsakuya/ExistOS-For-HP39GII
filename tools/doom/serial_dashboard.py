@@ -118,8 +118,9 @@ def ray_state(raw):
                       perf.get("elapsed_ms") if perf else None,
         **{key: perf.get(key) if perf else None for key in (
             "batch_samples", "trace_us", "preview_us", "lcd_us", "batch_max_us",
-            "primary", "reflection", "shadow", "sphere_tests", "plane_tests",
-            "camera_us", "intersect_us", "shadow_us", "shade_us", "reflection_us", "stack_words")},
+            "primary", "reflection", "refraction", "shadow", "sphere_tests", "plane_tests",
+            "glass_exits", "tir_events", "floor_reflection",
+            "camera_us", "intersect_us", "shadow_us", "shade_us", "reflection_us", "refraction_us", "stack_words")},
         "exit_phases": exits, "raw": perf, "boot": boot,
     }, packets[-1].start()
 

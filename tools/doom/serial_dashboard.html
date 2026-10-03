@@ -113,10 +113,10 @@ async function refresh() {
     byId('raytiming').textContent = ray ? `${rayMs(ray.trace_us)} / ${rayMs(ray.preview_us)} / ${rayMs(ray.lcd_us)} ms` : '—';
     byId('raybatch').textContent = ray ? `${rayMs(ray.batch_max_us)} ms · 本批 ${ray.batch_samples ?? '—'}` : '—';
     byId('raystate').textContent = ray ? `${ray.stage} · generation ${ray.generation ?? '—'} · pass ${ray.pass} · C${ray.contrast ?? '—'} · ${ray.event ?? '—'}` : 'Ray 状态 —';
-    byId('rayrays').textContent = ray ? `射线 primary ${ray.primary ?? '—'} · reflection ${ray.reflection ?? '—'} · shadow ${ray.shadow ?? '—'}` : 'Ray 射线计数 —';
-    byId('raytests').textContent = ray ? `球体测试 ${ray.sphere_tests ?? '—'} · 平面测试 ${ray.plane_tests ?? '—'}` : 'Ray 交点测试 —';
+    byId('rayrays').textContent = ray ? `射线 primary ${ray.primary ?? '—'} · reflection ${ray.reflection ?? '—'} · refraction ${ray.refraction ?? '—'} · shadow ${ray.shadow ?? '—'}` : 'Ray 射线计数 —';
+    byId('raytests').textContent = ray ? `球体测试 ${ray.sphere_tests ?? '—'} · 平面测试 ${ray.plane_tests ?? '—'} · 玻璃出射 ${ray.glass_exits ?? '—'} · 全反射 ${ray.tir_events ?? '—'} · 地板反射 ${ray.floor_reflection ?? '—'}` : 'Ray 交点测试 —';
     byId('raystack').textContent = ray ? `栈剩余 ${ray.stack_words != null && ray.stack_words >= 0 ? ray.stack_words : '—'} words` : 'Ray 栈 —';
-    byId('rayphases').textContent = ray ? [['camera', '相机'], ['intersect', '交点'], ['shadow', '阴影'], ['shade', '着色'], ['reflection', '反射']].map(([key, label]) => `${label} ${rayMs(ray[`${key}_us`])} ms`).join(' · ') : 'Ray 各阶段时间 —';
+    byId('rayphases').textContent = ray ? [['camera', '相机'], ['intersect', '交点'], ['shadow', '阴影'], ['shade', '着色'], ['reflection', '反射'], ['refraction', '折射']].map(([key, label]) => `${label} ${rayMs(ray[`${key}_us`])} ms`).join(' · ') : 'Ray 各阶段时间 —';
     byId('rayexit').textContent = ray ? `退出阶段 ${ray.exit_phases.join(' → ') || '—'}` : 'Ray 退出阶段 —';
     byId('fps').textContent = s.performance?.fps != null ? `${s.performance.fps} fps` : '—';
     byId('frametime').textContent = s.performance ? `${s.performance.total_ms} ms` : '—';

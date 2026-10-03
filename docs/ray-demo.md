@@ -1,4 +1,4 @@
-# Ray: native mirror-sphere demo
+# Ray: native sphere and studio demo
 
 ## First test version
 
@@ -47,6 +47,46 @@ without fast-math; the rest of System keeps its existing compiler options.
 The light and sphere radius inverses are constants, specular exponent 16 uses
 four squarings, and shadow traversal stops at the first blocker. Only mirror
 material generates a secondary reflection, with no refraction branches.
+
+## Studio V2 candidate
+
+The next candidate uses the same three enlarged spheres, camera controls,
+framebuffer and progressive sampling schedule. Materials are glass on the
+left, chrome in the center, and patterned porcelain on the right. A procedural
+studio environment supplies bright panels for chrome reflections. The floor
+has a restrained reflection, and two fixed light samples approximate softer
+shadows. This is not a fully sampled area light.
+
+Glass uses Snell refraction at entry and exit, with a bounded analytic sphere
+exit rather than a recursive scene traversal. View-dependent Fresnel blending
+combines transmitted and reflected luminance. Secondary rays terminate at
+direct surface shading; nested mirrors, internal multi-bounce glass, caustics
+and stochastic global illumination are outside this candidate.
+
+The moving preview approximates glass with face-level alpha blending, chrome
+with an environment lookup, and porcelain with broad pattern bands. It still
+does not cast rays or allocate a depth buffer. Ground contact shadows in the
+preview are translucent polygons, distinct from traced shadows after stopping.
+
+V2 adds refraction ray counts and inclusive refraction timing to the logs and
+panel. Glass exits, total internal reflection events and floor reflection rays
+are also recorded. `RAY_EVENT` now includes the device millisecond timestamp
+so physical wait/start timing can be checked. The first tested V1 results below
+remain a separate baseline; V2 hardware performance and visual quality are
+pending a new device test.
+
+The signed V2 candidate is 5,945,252 bytes (7,912 bytes above V1). Its ELF
+contains 5,935,799 bytes of text, 4,948 bytes of data and 86,256 bytes of BSS.
+All six host stages passed, including Snell/critical-angle/TIR tests, unchanged
+pixel coverage, preview with zero ray queries, and 16 dashboard tests. The
+largest individual ARM Ray function reports 472 stack bytes, excluding its
+callees; the task stack remains 8 KiB and peak usage is not measured.
+
+A same-host renderer comparison uses 50 frames at each of three identical
+camera poses with counters and detailed clocks disabled. V2 costs 1.37 to
+2.06 times V1 in this test. These ratios describe the host only and do not
+predict ARM elapsed time. Evidence and previews are in
+`build/ray-studio-validation/`, including `host-comparison.json`.
 
 The app borrows the existing 32,512-byte UI framebuffer. Its renderers do not
 allocate a second framebuffer, floating-point accumulation image, full-screen
