@@ -2,7 +2,7 @@
 #include <string.h>
 
 static void invalidate(RaySession *s, uint32_t now, unsigned *events) {
-    if (s->phase == RAY_TRACE) {
+    if (s->phase == RAY_TRACE || s->phase == RAY_POSTAA) {
         ++s->cancellations;
         *events |= RAY_CANCELLED;
     }
@@ -29,7 +29,7 @@ void RaySession_Init(RaySession *s, uint32_t now_ms) {
 unsigned RaySession_Update(RaySession *s, uint32_t now, unsigned buttons) {
     if (!s) return 0u;
     unsigned events = 0u;
-    const unsigned was_moving = s->previous_buttons & (RAY_UP | RAY_DOWN | RAY_LEFT | RAY_RIGHT);
+    const unsigned was_moving = s->previous_buttons & RAY_MOTION_MASK;
     const unsigned presses = buttons & ~s->previous_buttons;
     s->previous_buttons = buttons;
     if (presses & RAY_RESET) {
@@ -40,9 +40,13 @@ unsigned RaySession_Update(RaySession *s, uint32_t now, unsigned buttons) {
         s->contrast = (s->contrast + 1u) % 3u;
         invalidate(s, now, &events);
     }
-    if (buttons & (RAY_UP | RAY_DOWN | RAY_LEFT | RAY_RIGHT)) {
+    if (presses & RAY_AA_TOGGLE) {
+        s->aa_enabled = s->aa_enabled ? 0u : 1u;
+        invalidate(s, now, &events);
+    }
+    if (buttons & RAY_MOTION_MASK) {
         /* A held key postpones tracing even when movement is blocked. */
-        if (s->phase == RAY_TRACE || s->phase == RAY_DONE)
+        if (s->phase == RAY_TRACE || s->phase == RAY_POSTAA || s->phase == RAY_DONE)
             invalidate(s, now, &events);
         s->phase = RAY_PREVIEW;
         s->last_motion_ms = now;
@@ -53,7 +57,16 @@ unsigned RaySession_Update(RaySession *s, uint32_t now, unsigned buttons) {
                                     (buttons & RAY_DOWN ? 1.0f : 0.0f)) * (float)dt * 0.002f;
             const float turn = ((buttons & RAY_RIGHT ? 1.0f : 0.0f) -
                                 (buttons & RAY_LEFT ? 1.0f : 0.0f)) * (float)dt * 0.001f;
-            if (RayCamera_Move(&s->camera, distance, turn)) {
+            const float pitch = ((buttons & RAY_PITCH_UP ? 1.0f : 0.0f) -
+                                 (buttons & RAY_PITCH_DOWN ? 1.0f : 0.0f)) * (float)dt * 0.001f;
+            const float roll = ((buttons & RAY_ROLL_RIGHT ? 1.0f : 0.0f) -
+                                (buttons & RAY_ROLL_LEFT ? 1.0f : 0.0f)) * (float)dt * 0.001f;
+            int changed = 0;
+            if (distance != 0.0f || turn != 0.0f)
+                changed = RayCamera_Move(&s->camera, distance, turn);
+            if (pitch != 0.0f || roll != 0.0f)
+                changed |= RayCamera_Orient(&s->camera, 0.0f, pitch, roll);
+            if (changed) {
                 invalidate(s, now, &events);
                 s->phase = RAY_PREVIEW;
             }
@@ -105,6 +118,6 @@ unsigned RaySession_TraceBatch(RaySession *s, uint8_t *pixels,
         if (budget_us && (completed & 7u) == 0u &&
             (uint32_t)(Ray_Clock() - began) >= budget_us) break;
     }
-    if (s->pass == 3u) s->phase = RAY_DONE;
+    if (s->pass == 3u) s->phase = s->aa_enabled ? RAY_POSTAA : RAY_DONE;
     return completed;
 }

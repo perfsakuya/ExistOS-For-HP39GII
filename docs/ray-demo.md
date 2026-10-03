@@ -15,15 +15,22 @@ and separated from the others; tracing, collision and preview share the scene.
 |---|---|
 | Up / Down | Move forward / backward |
 | Left / Right | Turn |
+| 8 / 2 | Pitch up / down |
+| 4 / 6 | Roll left / right |
 | F1 | Reset the camera |
+| F2 | Toggle edge antialiasing (default OFF on launch) |
 | F3 | Cycle C1 / C2 / C3 contrast |
 | F6 / ON | Return to the application list |
 
 The camera cannot pass through the spheres and is constrained to the small
-scene area. While a movement key is held, only clipped polygons and scanlines
+scene area. Pitch is limited to +/-80 degrees; yaw and roll wrap through a
+complete turn. Translation follows horizontal yaw even when the view is tilted.
+F1 restores the original position and orientation while preserving the AA
+setting. While a movement or orientation key is held, only clipped polygons and scanlines
 are drawn. The preview does not cast primary, reflection or shadow rays.
 The observed key release starts a 1000 ms quiet period; camera reset or contrast
-changes also restart the deadline. Moving again cancels the old generation.
+changes and the AA toggle also restart the deadline. Moving again cancels the
+old generation, including its post-processing stage.
 
 The tracer refines an existing preview through nested pixel samples:
 
@@ -106,15 +113,70 @@ submitted at roughly 100 ms intervals, at pass boundaries and on completion.
 Moving preview refreshes at no more than one frame per 60 ms; actual frame
 rate depends on calculation, display, paging and scheduling.
 
+## Studio V3: orientation and optional edge antialiasing
+
+The `2/8` keys look down/up and `4/6` bank left/right. Preview and tracing use
+the same analytic orthonormal camera basis; no incremental vector rotation
+drift accumulates. Looking down does not move the camera into the ground.
+The preview's sky gradient follows roll using three environment samples per
+row, with no visibility rays. Pitch is limited to +/-80 degrees.
+
+F2 switches AA on a press edge, with OFF as the launch default. A preview-only
+`AA ON` / `AA OFF` badge confirms the setting. All traced samples overwrite
+that badge before post-processing begins, so it is absent from the final image.
+Changing AA regenerates the frame, since only one framebuffer is retained.
+
+The filter uses integer local contrast and Sobel edge classification. Diagonal
+edge candidates keep 75% of their center luminance and mix 25% of the four
+neighbor mean. Low-contrast regions and straight axis-aligned steps/lines are
+preserved. This is a bounded grayscale edge approximation, with no contour
+search or subpixel reconstruction. It softens some jagged contours; distant
+checkerboard undersampling can remain. Design references are
+[NVIDIA FXAA](https://developer.download.nvidia.com/assets/gamedev/files/sdk/11/FXAA_WhitePaper.pdf)
+and [Intel CMAA2](https://www.intel.com/content/www/us/en/developer/articles/technical/conservative-morphological-anti-aliasing-20.html).
+
+AA runs only after all 32,512 primary pixels have been traced. Three cached
+original rows allow deterministic in-place processing without reading back
+already filtered pixels. The cache is 768 bytes; its complete static state is
+792 bytes on ARM, with no added heap, full-screen buffer, ray or task. Batches
+process at most eight rows, checking a 6,000 us budget after each row and
+yielding to input between batches. Movement, settings and F6 can interrupt
+this stage. As with tracing, the budget can be exceeded by the last work unit.
+
+`RAY_POSTAA=4` is a distinct logged stage. DONE is emitted after AA and the
+final LCD submission, so its first completed elapsed time includes both.
+`aa_us` measures initialization and active filter batches, excluding caller
+yields/LCD/tracing. `aa_batch_max_us`, `aa_rows`, `aa_pixels` and `aa_changed`
+are separate from ray timing and counts. The panel shows the AA setting,
+processed rows, changed pixels and yaw/pitch/roll in degrees.
+
+All six host stages passed, including 17 dashboard tests. Checks cover extreme
+orientation and invalid input, horizontal movement, release/idle and AA toggle
+gates, cancellation of partial AA, frame guards, flat/axial detail preservation,
+and byte-exact equality across whole-frame and 1/3/7/31-row filter batches.
+An independently integrated synthetic diagonal's squared error changed from
+520,192 to 168,192. This one pattern is not a general image-quality score.
+The default scene changed 2,313 pixels and a tilted scene 3,165, each scanning
+32,512 pixels without adding rays. Previews are in
+`build/ray-controls-aa-validation/pose-aa-contact-sheet.png`.
+
+The signed image is 5,949,676 bytes and passes the System/VM ROM limits. Its
+ELF reports 5,940,221 bytes of text, 4,948 bytes of data and 87,056 bytes of BSS.
+Actual compiler-option stack reports show a largest individual Ray function
+of 472 bytes and AA batch function of 96 bytes, excluding callees. The task
+still has 8 KiB; its peak is unmeasured. V3 orientation, AA appearance, added
+elapsed time and interrupt/exit response await hardware testing.
+
 ## Logs and dashboard
 
 - `RAY_BOOT`: dimensions, session size, borrowed framebuffer, task stack,
   render allocation budget, clock reading and initial display drain.
 - `RAY_EVENT`: generation, preview/wait/trace/done, cancellation, contrast,
-  camera reset and current sample count.
+  camera reset, orientation in milliradians, AA toggle/start/done, and sample count.
 - `RAY_PERF`: cumulative trace/preview/LCD times, maximum batch duration,
   sample count, ray/test counts and camera/intersection/shadow/shading/reflection
-  timings for the current generation.
+  timings for the current generation. AA has separate processing time, scanned
+  and changed pixel counts, processed rows, and maximum batch duration.
 - `RAY_MEM`: whole-System heap and ZRAM observations, using the same definitions
   as Game memory reports.
 - `RAY_EXIT`: key, key release, UI resume and task deletion.

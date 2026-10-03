@@ -434,6 +434,34 @@ class DashboardStateTest(unittest.TestCase):
         new_launch += "RAY_PERF generation=7 phase=2 samples=128 elapsed_ms=88\n"
         self.assertEqual(self.read(new_launch)["ray"]["elapsed_ms"], 88)
 
+    def test_ray_post_aa_phase_timing_toggle_and_camera(self):
+        boot = "RAY_BOOT phase=task_start pixels=32512 aa_default=0\n"
+        legacy = self.read("RAY_BOOT phase=task_start pixels=32512\n")
+        self.assertIsNone(legacy["ray"]["aa_enabled"])
+        log = boot + ("RAY_EVENT event=aa_toggle generation=2 phase=1 aa_enabled=1 "
+                      "pitch_mrad=300 roll_mrad=-200 yaw_mrad=0\n"
+                      "RAY_EVENT event=aa_start generation=2 phase=4 samples=32512 aa_enabled=1\n"
+                      "RAY_PERF generation=2 phase=4 samples=32512 elapsed_ms=12000 "
+                      "aa_us=2200 aa_rows=4 aa_pixels=1024 aa_changed=45 aa_batch_max_us=900\n")
+        s = self.read(log)
+        self.assertEqual(s["stage"], "Ray 抗锯齿处理中")
+        self.assertEqual(s["ray"]["aa_enabled"], 1)
+        self.assertEqual(s["ray"]["pitch_mrad"], 300)
+        self.assertEqual(s["ray"]["roll_mrad"], -200)
+        self.assertEqual(s["ray"]["aa_us"], 2200)
+        self.assertEqual(s["ray"]["aa_changed"], 45)
+        self.assertEqual(s["ray"]["elapsed_ms"], 12000)
+        log += ("RAY_PERF generation=2 phase=3 samples=32512 elapsed_ms=12345 "
+                "aa_us=7000 aa_rows=127 aa_pixels=32512 aa_changed=500 aa_batch_max_us=900\n"
+                "RAY_PERF generation=2 phase=3 samples=32512 elapsed_ms=88888 aa_us=7000\n")
+        self.assertEqual(self.read(log)["ray"]["elapsed_ms"], 12345)
+        log += "RAY_EVENT event=aa_toggle generation=2 phase=1 samples=0 aa_enabled=0\n"
+        s = self.read(log)
+        self.assertEqual(s["stage"], "Ray 等待静止")
+        self.assertIsNone(s["ray"]["elapsed_ms"])
+        self.assertIsNone(s["ray"]["aa_us"])
+        self.assertEqual(s["ray"]["aa_enabled"], 0)
+
     def test_ray_optional_refraction_fields_preserve_legacy_and_completed_elapsed(self):
         boot = "RAY_BOOT phase=task_start pixels=32512\n"
         legacy = boot + "RAY_PERF generation=1 phase=2 samples=2048 elapsed_ms=300 primary=2048 reflection=300\n"

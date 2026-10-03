@@ -9,9 +9,11 @@
 #include "keyboard_gii39.h"
 #include "sys_llapi.h"
 #include "RaySession.h"
+#include "RayPost.h"
 
 volatile int SkyOS_RayRunning;
 static RaySession session;
+static RayPostState post;
 static uint8_t barrier_pixel;
 typedef struct {
     uint32_t began_ms, trace_us, preview_us, lcd_us, batch_max_us;
@@ -34,19 +36,54 @@ static unsigned buttons_for(uint16_t key) {
         case KEY_LEFT: return RAY_LEFT;
         case KEY_RIGHT: return RAY_RIGHT;
         case KEY_F1: return RAY_RESET;
+        case KEY_F2: return RAY_AA_TOGGLE;
         case KEY_F3: return RAY_CONTRAST;
+        case KEY_2: return RAY_PITCH_DOWN;
+        case KEY_8: return RAY_PITCH_UP;
+        case KEY_4: return RAY_ROLL_LEFT;
+        case KEY_6: return RAY_ROLL_RIGHT;
         default: return 0u;
     }
 }
 
+/* A preview-only badge is overwritten by the complete traced image. No HUD
+ * enters the AA source image, and no saved framebuffer or font heap is needed. */
+static void preview_badge(uint8_t *pixels) {
+    static const uint8_t glyphs[5][5] = {
+        {2, 5, 7, 5, 5}, /* A */
+        {7, 5, 5, 5, 7}, /* O */
+        {5, 7, 7, 7, 5}, /* N */
+        {7, 4, 6, 4, 4}, /* F */
+        {0, 0, 0, 0, 0}, /* space */
+    };
+    const unsigned letters[6] = {0u, 0u, 4u, 1u,
+                               session.aa_enabled ? 2u : 3u,
+                               session.aa_enabled ? 4u : 3u};
+    for (unsigned y = 2u; y < 16u; ++y)
+        for (unsigned x = 2u; x < 52u; ++x)
+            pixels[y * RAY_WIDTH + x] = 240u;
+    for (unsigned c = 0; c < 6u; ++c)
+        for (unsigned row = 0; row < 5u; ++row)
+            for (unsigned col = 0; col < 3u; ++col)
+                if (glyphs[letters[c]][row] & (4u >> col))
+                    for (unsigned dy = 0; dy < 2u; ++dy)
+                        for (unsigned dx = 0; dx < 2u; ++dx)
+                            pixels[(4u + row * 2u + dy) * RAY_WIDTH +
+                                   4u + c * 8u + col * 2u + dx] = 0u;
+}
+
 static void log_event(const char *event) {
     printf("RAY_EVENT event=%s generation=%lu phase=%u samples=%lu pass=%u contrast=%u "
-           "x_q8=%ld z_q8=%ld cancellations=%lu ms=%lu\n", event,
+           "x_q8=%ld z_q8=%ld cancellations=%lu ms=%lu aa_enabled=%u "
+           "yaw_mrad=%ld pitch_mrad=%ld roll_mrad=%ld\n", event,
            (unsigned long)session.generation, session.phase,
            (unsigned long)session.traced_samples, session.pass,
            session.contrast + 1u, (long)(session.camera.position.x * 256.0f),
            (long)(session.camera.position.z * 256.0f), (unsigned long)session.cancellations,
-           (unsigned long)ll_get_time_ms());
+           (unsigned long)ll_get_time_ms(), session.aa_enabled,
+           (long)(session.camera.yaw * 1000.0f),
+           (long)(session.camera.pitch * 1000.0f),
+           (long)(session.camera.roll * 1000.0f));
 }
 
 static void log_perf(const RayPerf *p) {
@@ -55,7 +92,9 @@ static void log_perf(const RayPerf *p) {
            "trace_us=%lu preview_us=%lu lcd_us=%lu batch_max_us=%lu primary=%lu reflection=%lu shadow=%lu "
            "sphere_tests=%lu plane_tests=%lu camera_us=%lu intersect_us=%lu shadow_us=%lu shade_us=%lu "
            "reflection_us=%lu refraction=%lu refraction_us=%lu glass_exits=%lu tir_events=%lu floor_reflection=%lu "
-           "stack_words=-1 preview_triangles=%lu preview_pixels=%lu hits=%lu\n",
+           "stack_words=-1 preview_triangles=%lu preview_pixels=%lu hits=%lu "
+           "aa_enabled=%u aa_us=%lu aa_rows=%u aa_pixels=%lu aa_changed=%lu aa_batch_max_us=%lu "
+           "yaw_mrad=%ld pitch_mrad=%ld roll_mrad=%ld\n",
            (unsigned long)session.generation, session.phase, session.pass,
            (unsigned long)session.traced_samples, p->batch_samples,
            (unsigned long)(ll_get_time_ms() - p->began_ms),
@@ -70,7 +109,12 @@ static void log_perf(const RayPerf *p) {
            (unsigned long)r->glass_exits, (unsigned long)r->tir_events,
            (unsigned long)r->floor_reflection_rays,
            (unsigned long)r->preview_triangles, (unsigned long)r->preview_pixels,
-           (unsigned long)r->hits);
+           (unsigned long)r->hits, session.aa_enabled, (unsigned long)post.aa_us,
+           (unsigned)post.row, (unsigned long)post.pixels_processed, (unsigned long)post.pixels_changed,
+           (unsigned long)post.batch_max_us,
+           (long)(session.camera.yaw * 1000.0f),
+           (long)(session.camera.pitch * 1000.0f),
+           (long)(session.camera.roll * 1000.0f));
 }
 
 static void log_memory(void) {
@@ -89,9 +133,10 @@ static void ray_task(void *unused) {
     (void)unused;
     printf("RAY_BOOT phase=task_start width=%u height=%u pixels=%u session_bytes=%u "
            "framebuffer_bytes=%u renderer_heap_bytes=0 task_stack_bytes=8192 idle_ms=1000 batch_budget_us=6000 "
-           "cpu_mhz=%d detail_timing=1 reflection_timing_nested=1 refraction_timing_nested=1 scene=studio-v2\n",
+           "cpu_mhz=%d detail_timing=1 reflection_timing_nested=1 refraction_timing_nested=1 scene=studio-v3 "
+           "aa_default=0 aa_method=edge-gray aa_scratch_bytes=768 post_state_bytes=%u\n",
            RAY_WIDTH, RAY_HEIGHT, RAY_PIXELS, (unsigned)sizeof(session), RAY_PIXELS,
-           ll_get_cur_freq());
+           ll_get_cur_freq(), (unsigned)sizeof(post));
     uint8_t *pixels = SystemUIBorrowFrameBuffer();
     if (!pixels) {
         printf("RAY_BOOT phase=framebuffer_error\n");
@@ -107,6 +152,7 @@ static void ray_task(void *unused) {
            (unsigned long)(ll_get_time_us() - drain_began));
     Ray_SetClock(ll_get_time_us);
     RaySession_Init(&session, ll_get_time_ms());
+    memset(&post, 0, sizeof(post));
     RayPerf perf = {0};
     perf.began_ms = ll_get_time_ms();
     uint32_t last_log_ms = perf.began_ms, last_mem_ms = perf.began_ms;
@@ -123,18 +169,20 @@ static void ray_task(void *unused) {
         const unsigned buttons = buttons_for(key);
         const unsigned pressed = buttons & ~previous_buttons;
         /* Preserve an interrupted generation's counters before invalidating it. */
-        if (session.phase == RAY_TRACE &&
-            ((buttons & (RAY_UP | RAY_DOWN | RAY_LEFT | RAY_RIGHT)) ||
-             (pressed & (RAY_RESET | RAY_CONTRAST)))) log_perf(&perf);
+        if ((session.phase == RAY_TRACE || session.phase == RAY_POSTAA) &&
+            ((buttons & RAY_MOTION_MASK) ||
+             (pressed & (RAY_RESET | RAY_CONTRAST | RAY_AA_TOGGLE)))) log_perf(&perf);
         const unsigned events = RaySession_Update(&session, now, buttons);
         if (events & RAY_CHANGED) {
             if (events & RAY_CANCELLED) log_event("cancel");
             memset(&session.stats, 0, sizeof(session.stats));
             memset(&perf, 0, sizeof(perf));
+            memset(&post, 0, sizeof(post));
             perf.began_ms = now;
         }
         if (pressed & RAY_RESET) log_event("reset");
         if (pressed & RAY_CONTRAST) log_event("contrast");
+        if (pressed & RAY_AA_TOGGLE) log_event("aa_toggle");
         if (events & RAY_STARTED) {
             memset(&perf, 0, sizeof(perf));
             perf.began_ms = now;
@@ -149,6 +197,7 @@ static void ray_task(void *unused) {
         if (session.preview_dirty && (uint32_t)(now - last_preview_ms) >= 60u) {
             const uint32_t began = ll_get_time_us();
             RayPreview_Render(pixels, &session.camera, session.contrast, &session.stats);
+            preview_badge(pixels);
             perf.preview_us += ll_get_time_us() - began;
             session.preview_dirty = 0u;
             last_preview_ms = now;
@@ -164,8 +213,24 @@ static void ray_task(void *unused) {
             perf.batch_samples = count;
             if ((uint32_t)(now - last_present_ms) >= 100u || session.pass != pass || session.phase == RAY_DONE)
                 needs_present = 1;
-            if (session.phase == RAY_DONE) {
+            if (session.phase == RAY_POSTAA) {
+                RayPost_Init(&post, pixels);
+                log_event("aa_start");
+                needs_present = 1;
+            } else if (session.phase == RAY_DONE) {
                 just_completed = 1;
+            }
+        }
+        if (session.phase == RAY_POSTAA) {
+            /* Integer post processing casts no rays. Poll inputs and yield
+             * between at most eight rows; the borrowed frame is fully drained. */
+            RayPost_Batch(&post, pixels, 8u, 6000u);
+            if ((uint32_t)(now - last_present_ms) >= 100u || post.done)
+                needs_present = 1;
+            if (post.done) {
+                session.phase = RAY_DONE;
+                just_completed = 1;
+                log_event("aa_done");
             }
         }
         if (needs_present) {

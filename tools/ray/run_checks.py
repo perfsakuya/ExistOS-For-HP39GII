@@ -18,6 +18,11 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "System/applications/user/ray_demo"
 DEFAULT_GCC = Path("D:/w64devkit/bin/gcc.exe")
+BASE_IMAGES = ["preview.pgm", "trace-c1.pgm", "trace-c2.pgm", "trace-c3.pgm"]
+POSE_AA_IMAGES = ["preview-pitch.pgm", "preview-roll.pgm", "preview-tilt.pgm", "trace-tilt.pgm",
+                  "trace-c2.pgm", "trace-aa.pgm", "trace-tilt.pgm", "trace-tilt-aa.pgm",
+                  "aa-diagonal-before.pgm", "aa-diagonal-after.pgm"]
+ALL_IMAGES = list(dict.fromkeys(BASE_IMAGES + POSE_AA_IMAGES))
 
 
 def run_stage(stages, name, command, cwd, output):
@@ -38,20 +43,27 @@ def run_stage(stages, name, command, cwd, output):
 
 def contact_sheet(output):
     from PIL import Image, ImageDraw
-    names = ["preview.pgm", "trace-c1.pgm", "trace-c2.pgm", "trace-c3.pgm"]
-    sheet = Image.new("RGB", (1040, 602), "#ededed")
-    draw = ImageDraw.Draw(sheet)
-    for index, name in enumerate(names):
+    for name in ALL_IMAGES:
         with Image.open(output / name) as pgm:
             if pgm.size != (256, 127):
                 raise ValueError(f"Unexpected Ray image dimensions: {name}: {pgm.size}")
             pgm.save(output / name.replace(".pgm", ".png"))
-            image = pgm.convert("RGB").resize((512, 254), Image.Resampling.NEAREST)
-        x, y = (index % 2) * 520, (index // 2) * 301
-        draw.text((x + 5, y + 6), name, fill="#111111")
-        sheet.paste(image, (x + 4, y + 25))
-    draw.text((5, 584), "Host render correctness previews. Host duration is not ARM performance.", fill="#111111")
-    sheet.save(output / "contact-sheet.png")
+
+    def sheet_for(names, filename):
+        rows = (len(names) + 1) // 2
+        sheet = Image.new("RGB", (1040, rows * 301 + 20), "#ededed")
+        draw = ImageDraw.Draw(sheet)
+        for index, name in enumerate(names):
+            with Image.open(output / name) as pgm:
+                image = pgm.convert("RGB").resize((512, 254), Image.Resampling.NEAREST)
+            x, y = (index % 2) * 520, (index // 2) * 301
+            draw.text((x + 5, y + 6), name, fill="#111111")
+            sheet.paste(image, (x + 4, y + 25))
+        draw.text((5, rows * 301), "Host render correctness previews. Host duration is not ARM performance.", fill="#111111")
+        sheet.save(output / filename)
+
+    sheet_for(BASE_IMAGES, "contact-sheet.png")
+    sheet_for(POSE_AA_IMAGES, "pose-aa-contact-sheet.png")
 
 
 def dashboard_html(output):
@@ -83,6 +95,11 @@ def main():
     evidence = {"scope": "host_only", "host_python": sys.executable,
                 "host_gcc": str(args.gcc.resolve()), "durations_are_ARM_performance": False,
                 "hardware_exit_verified": False, "stages": stages, "artifacts": [], "passed": False}
+    sources = [APP / name for name in ("RayCore.c", "RayCore.h", "RayPreview.c", "RaySession.c",
+                                      "RaySession.h", "RayPost.c", "RayPost.h")]
+    sources += [Path(__file__).resolve(), ROOT / "tools/ray/check_ray.c"]
+    evidence["sources"] = [{"path": str(source), "sha256": hashlib.sha256(source.read_bytes()).hexdigest()}
+                           for source in sources]
     flags = ["-std=c11", "-O2", "-Wall", "-Wextra", "-Werror"]
     core_object = output / "RayCore.observed.o"
     executable = output / ("check_ray.exe" if os.name == "nt" else "check_ray")
@@ -91,7 +108,7 @@ def main():
             ("compile-core", [args.gcc, *flags, "-DRay_TracePixel=Ray_TestRealTracePixel",
                               "-c", APP / "RayCore.c", "-o", core_object]),
             ("compile-check", [args.gcc, *flags, ROOT / "tools/ray/check_ray.c",
-                               APP / "RayPreview.c", APP / "RaySession.c", core_object,
+                               APP / "RayPreview.c", APP / "RaySession.c", APP / "RayPost.c", core_object,
                                "-lm", "-o", executable]),
             ("ray-checks", [executable, output]),
             ("dashboard-checks", [sys.executable, "-m", "unittest", "test_serial_dashboard.py"]),
@@ -104,8 +121,8 @@ def main():
         if not run_stage(stages, "images", [sys.executable, __file__, "--images-only", output], ROOT, output):
             return 1
         evidence["passed"] = True
-        for name in ["preview.pgm", "trace-c1.pgm", "trace-c2.pgm", "trace-c3.pgm",
-                     "preview.png", "trace-c1.png", "trace-c2.png", "trace-c3.png", "contact-sheet.png"]:
+        for name in ALL_IMAGES + [name.replace(".pgm", ".png") for name in ALL_IMAGES] + [
+                "contact-sheet.png", "pose-aa-contact-sheet.png"]:
             artifact = output / name
             evidence["artifacts"].append({"path": str(artifact), "bytes": artifact.stat().st_size,
                                           "sha256": hashlib.sha256(artifact.read_bytes()).hexdigest()})

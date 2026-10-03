@@ -68,9 +68,11 @@
   <div class="metric"><div class="label">Ray 追踪已用时间</div><div class="value" id="rayelapsed">—</div></div>
   <div class="metric"><div class="label">Ray 追踪 / 预览 / LCD</div><div class="value" id="raytiming">—</div></div>
   <div class="metric"><div class="label">Ray 最大批次</div><div class="value" id="raybatch">—</div></div>
+  <div class="metric"><div class="label">Ray 抗锯齿耗时</div><div class="value" id="rayaa">—</div></div>
 </div>
 <div class="events"><span id="raystate">Ray 状态 —</span><span id="rayrays">Ray 射线计数 —</span><span id="raytests">Ray 交点测试 —</span><span id="raystack">Ray 栈 —</span></div>
 <div class="events"><span id="rayphases">Ray 各阶段时间 —</span><span id="rayexit">Ray 退出阶段 —</span></div>
+<div class="events"><span id="raycamera">Ray 相机 —</span><span id="rayaa-detail">Ray 抗锯齿 —</span></div>
 </section>
 <div class="events"><span id="literender">Lite 绘制 —</span><span id="litequeue">Lite 显示提交 —</span><span id="litemap">Lite 地图 —</span></div>
 <div class="events"><span id="fastgame">混合版状态 —</span></div>
@@ -112,12 +114,16 @@ async function refresh() {
     byId('rayelapsed').textContent = ray?.elapsed_ms != null ? `${ray.elapsed_ms} ms` : '—';
     byId('raytiming').textContent = ray ? `${rayMs(ray.trace_us)} / ${rayMs(ray.preview_us)} / ${rayMs(ray.lcd_us)} ms` : '—';
     byId('raybatch').textContent = ray ? `${rayMs(ray.batch_max_us)} ms · 本批 ${ray.batch_samples ?? '—'}` : '—';
+    byId('rayaa').textContent = ray?.aa_us != null ? `${rayMs(ray.aa_us)} ms` : '—';
     byId('raystate').textContent = ray ? `${ray.stage} · generation ${ray.generation ?? '—'} · pass ${ray.pass} · C${ray.contrast ?? '—'} · ${ray.event ?? '—'}` : 'Ray 状态 —';
     byId('rayrays').textContent = ray ? `射线 primary ${ray.primary ?? '—'} · reflection ${ray.reflection ?? '—'} · refraction ${ray.refraction ?? '—'} · shadow ${ray.shadow ?? '—'}` : 'Ray 射线计数 —';
     byId('raytests').textContent = ray ? `球体测试 ${ray.sphere_tests ?? '—'} · 平面测试 ${ray.plane_tests ?? '—'} · 玻璃出射 ${ray.glass_exits ?? '—'} · 全反射 ${ray.tir_events ?? '—'} · 地板反射 ${ray.floor_reflection ?? '—'}` : 'Ray 交点测试 —';
     byId('raystack').textContent = ray ? `栈剩余 ${ray.stack_words != null && ray.stack_words >= 0 ? ray.stack_words : '—'} words` : 'Ray 栈 —';
     byId('rayphases').textContent = ray ? [['camera', '相机'], ['intersect', '交点'], ['shadow', '阴影'], ['shade', '着色'], ['reflection', '反射'], ['refraction', '折射']].map(([key, label]) => `${label} ${rayMs(ray[`${key}_us`])} ms`).join(' · ') : 'Ray 各阶段时间 —';
     byId('rayexit').textContent = ray ? `退出阶段 ${ray.exit_phases.join(' → ') || '—'}` : 'Ray 退出阶段 —';
+    const degrees = value => value == null ? '—' : (value * 180 / (1000 * Math.PI)).toFixed(1) + '°';
+    byId('raycamera').textContent = ray ? `相机 偏航 ${degrees(ray.yaw_mrad)} · 俯仰 ${degrees(ray.pitch_mrad)} · 滚转 ${degrees(ray.roll_mrad)}` : 'Ray 相机 —';
+    byId('rayaa-detail').textContent = ray ? `AA ${ray.aa_enabled == null ? '—' : ray.aa_enabled ? 'ON' : 'OFF'} · 行 ${ray.aa_rows ?? '—'} / 127 · 扫描 ${ray.aa_pixels ?? '—'} · 改动 ${ray.aa_changed ?? '—'} 像素 · 最大批次 ${rayMs(ray.aa_batch_max_us)} ms` : 'Ray 抗锯齿 —';
     byId('fps').textContent = s.performance?.fps != null ? `${s.performance.fps} fps` : '—';
     byId('frametime').textContent = s.performance ? `${s.performance.total_ms} ms` : '—';
     byId('litefps').textContent = s.lite ? `${s.lite.fps} fps` : '—';

@@ -39,8 +39,8 @@ static const float sphere_inverse_radius[RAY_SPHERE_COUNT] = {
 #define RAY_CAMERA_MAX_X    6.0f
 #define RAY_CAMERA_MIN_Z   -7.0f
 #define RAY_CAMERA_MAX_Z    7.0f
-#define RAY_PITCH_SIN      -0.10f
-#define RAY_PITCH_COS       0.9949874371f
+#define RAY_DEFAULT_PITCH  -0.1001674212f /* -asin(0.10), preserving the V2 view. */
+#define RAY_PITCH_LIMIT     1.3962634016f /* 80 degrees. */
 #define RAY_SCREEN_SCALE   (0.70f / 128.0f)
 
 typedef struct {
@@ -197,17 +197,19 @@ static void timer_finish(uint32_t *counter, uint32_t start)
 
 static void camera_basis(RayCamera *camera)
 {
-    float sine = sinf(camera->yaw);
-    float cosine = cosf(camera->yaw);
-    camera->forward.x = sine * RAY_PITCH_COS;
-    camera->forward.y = RAY_PITCH_SIN;
-    camera->forward.z = cosine * RAY_PITCH_COS;
-    camera->right.x = cosine;
-    camera->right.y = 0.0f;
-    camera->right.z = -sine;
-    camera->up.x = -sine * RAY_PITCH_SIN;
-    camera->up.y = RAY_PITCH_COS;
-    camera->up.z = -cosine * RAY_PITCH_SIN;
+    float sy = sinf(camera->yaw), cy = cosf(camera->yaw);
+    float sp = sinf(camera->pitch), cp = cosf(camera->pitch);
+    float sr = sinf(camera->roll), cr = cosf(camera->roll);
+    RayVec3 level_right = {cy, 0.0f, -sy};
+    RayVec3 level_up = {-sy * sp, cp, -cy * sp};
+    camera->forward.x = sy * cp;
+    camera->forward.y = sp;
+    camera->forward.z = cy * cp;
+    /* Analytic rotation keeps an orthonormal basis without cross-product
+       degeneracy. Positive roll banks the camera towards its right. */
+    camera->right = vec_subtract(vec_scale(level_right, cr),
+                                 vec_scale(level_up, sr));
+    camera->up = vec_add(vec_scale(level_right, sr), vec_scale(level_up, cr));
 }
 
 void RayCamera_Init(RayCamera *camera)
@@ -217,6 +219,8 @@ void RayCamera_Init(RayCamera *camera)
     camera->position.y = 1.45f;
     camera->position.z = -5.5f;
     camera->yaw = 0.0f;
+    camera->pitch = RAY_DEFAULT_PITCH;
+    camera->roll = 0.0f;
     camera_basis(camera);
 }
 
@@ -236,6 +240,40 @@ static int position_in_bounds(RayVec3 position)
            position.z >= RAY_CAMERA_MIN_Z &&
            position.z <= RAY_CAMERA_MAX_Z &&
            position.y > RAY_ORIGIN_OFFSET && position.y <= 8.0f;
+}
+
+static int finite_camera_angles(const RayCamera *camera)
+{
+    return finite_float(camera->yaw) && finite_float(camera->pitch) &&
+           finite_float(camera->roll);
+}
+
+int RayCamera_Orient(RayCamera *camera, float yaw_delta, float pitch_delta,
+                     float roll_delta)
+{
+    float yaw, pitch, roll;
+    int changed;
+    if (camera == NULL || !finite_float(yaw_delta) ||
+        !finite_float(pitch_delta) || !finite_float(roll_delta) ||
+        !finite_camera_angles(camera) || !position_in_bounds(camera->position))
+        return 0;
+    /* Reduce wrapped operands before adding. Pitch deltas are compared to
+       the remaining range before addition, so large finite inputs cannot
+       overflow either orientation path. */
+    yaw = wrap_yaw(wrap_yaw(camera->yaw) + wrap_yaw(yaw_delta));
+    roll = wrap_yaw(wrap_yaw(camera->roll) + wrap_yaw(roll_delta));
+    pitch = camera->pitch;
+    if (pitch > RAY_PITCH_LIMIT) pitch = RAY_PITCH_LIMIT;
+    if (pitch < -RAY_PITCH_LIMIT) pitch = -RAY_PITCH_LIMIT;
+    if (pitch_delta > RAY_PITCH_LIMIT - pitch) pitch = RAY_PITCH_LIMIT;
+    else if (pitch_delta < -RAY_PITCH_LIMIT - pitch) pitch = -RAY_PITCH_LIMIT;
+    else pitch += pitch_delta;
+    changed = yaw != camera->yaw || pitch != camera->pitch || roll != camera->roll;
+    camera->yaw = yaw;
+    camera->pitch = pitch;
+    camera->roll = roll;
+    camera_basis(camera);
+    return changed;
 }
 
 static int clear_movement(RayVec3 from, RayVec3 to)
@@ -263,23 +301,18 @@ static int clear_movement(RayVec3 from, RayVec3 to)
 int RayCamera_Move(RayCamera *camera, float distance, float turn)
 {
     RayVec3 candidate;
-    float yaw;
     int changed = 0;
     if (camera == NULL || !finite_float(distance) || !finite_float(turn) ||
-        !finite_float(camera->yaw) || !position_in_bounds(camera->position))
+        !finite_camera_angles(camera) || !position_in_bounds(camera->position))
         return 0;
 
-    /* Reduce each operand before adding, so even a very large finite turn
-       cannot overflow the yaw sum. Turning is allowed beside an obstacle. */
-    yaw = wrap_yaw(wrap_yaw(camera->yaw) + wrap_yaw(turn));
-    if (yaw != camera->yaw) changed = 1;
-    camera->yaw = yaw;
-    camera_basis(camera);
+    changed = RayCamera_Orient(camera, turn, 0.0f, 0.0f);
 
     if (distance != 0.0f) {
         candidate = camera->position;
-        candidate.x += sinf(yaw) * distance;
-        candidate.z += cosf(yaw) * distance;
+        /* Translation stays horizontal even when looking up or banking. */
+        candidate.x += sinf(camera->yaw) * distance;
+        candidate.z += cosf(camera->yaw) * distance;
         if (position_in_bounds(candidate) &&
             clear_movement(camera->position, candidate) &&
             (candidate.x != camera->position.x ||
@@ -584,6 +617,7 @@ uint8_t Ray_TracePixel(const RayCamera *camera, unsigned x, unsigned y,
     float sx, sy, luminance;
     if (camera == NULL || x >= RAY_WIDTH || y >= RAY_HEIGHT ||
         !position_in_bounds(camera->position) ||
+        !finite_camera_angles(camera) ||
         !finite_vector(camera->forward) || !finite_vector(camera->right) ||
         !finite_vector(camera->up))
         return 0u;

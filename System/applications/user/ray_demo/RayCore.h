@@ -8,7 +8,7 @@
 typedef struct { float x, y, z; } RayVec3;
 typedef struct {
     RayVec3 position, forward, right, up;
-    float yaw;
+    float yaw, pitch, roll;
 } RayCamera;
 enum { RAY_PORCELAIN=0u, RAY_CHROME=1u, RAY_GLASS=2u };
 typedef struct {
@@ -36,6 +36,10 @@ void Ray_SetClock(uint32_t (*clock_us)(void));
 uint32_t Ray_Clock(void);
 void RayCamera_Init(RayCamera *camera);
 int RayCamera_Move(RayCamera *camera, float distance, float turn);
+/* Angles are radians. Pitch saturates at +/-80 degrees; yaw and roll wrap
+ * into [-pi,pi]. Invalid input returns zero without changing the camera. */
+int RayCamera_Orient(RayCamera *camera, float yaw_delta, float pitch_delta,
+                     float roll_delta);
 uint8_t Ray_TracePixel(const RayCamera *camera, unsigned x, unsigned y,
                       unsigned contrast, RayStats *stats);
 void RayPreview_Render(uint8_t *pixels, const RayCamera *camera,

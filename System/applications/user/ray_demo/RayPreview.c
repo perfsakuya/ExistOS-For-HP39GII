@@ -438,7 +438,33 @@ void RayPreview_Render(uint8_t *pixels, const RayCamera *camera,
             }
         }
         gray = Ray_MapGray(Ray_EnvironmentLuminance(direction), contrast);
-        for (x = 0u; x < RAY_WIDTH; ++x) pixels[y * RAY_WIDTH + x] = gray;
+        if (valid_camera && fabsf(camera->right.y) > 0.001f) {
+            /* Banking tilts the sky too. Two endpoint samples and an integer
+             * gradient avoid tracing or normalizing a direction for every pixel. */
+            uint8_t edges[2];
+            float sy = (PREVIEW_HALF_HEIGHT - (float)y - 0.5f) / PREVIEW_FOCAL;
+            for (unsigned side = 0u; side < 2u; ++side) {
+                float sx = side ? PREVIEW_X_SLOPE : -PREVIEW_X_SLOPE;
+                RayVec3 edge = {camera->forward.x + sy * camera->up.x + sx * camera->right.x,
+                                camera->forward.y + sy * camera->up.y + sx * camera->right.y,
+                                camera->forward.z + sy * camera->up.z + sx * camera->right.z};
+                float length = sqrtf(preview_dot(edge, edge));
+                if (length > 0.00001f) {
+                    edge.x /= length;
+                    edge.y /= length;
+                    edge.z /= length;
+                } else edge = (RayVec3){0.0f, 0.0f, 1.0f};
+                edges[side] = Ray_MapGray(Ray_EnvironmentLuminance(edge), contrast);
+            }
+            for (x = 0u; x < RAY_WIDTH; ++x) {
+                unsigned weight = x & 127u;
+                unsigned a = x < 128u ? edges[0] : gray;
+                unsigned b = x < 128u ? gray : edges[1];
+                pixels[y * RAY_WIDTH + x] = (uint8_t)(((128u - weight) * a + weight * b + 64u) >> 7u);
+            }
+        } else {
+            for (x = 0u; x < RAY_WIDTH; ++x) pixels[y * RAY_WIDTH + x] = gray;
+        }
     }
     if (stats != NULL) stats->preview_pixels = RAY_PIXELS;
     if (!valid_camera) return;

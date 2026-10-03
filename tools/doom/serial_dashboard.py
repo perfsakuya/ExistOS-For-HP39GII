@@ -83,7 +83,7 @@ def ray_state(raw):
                 completed_elapsed_ms = None
             if kind == "EVENT":
                 event = values.get("event")
-                if event in ("start", "cancel", "contrast", "reset"):
+                if event in ("start", "cancel", "contrast", "reset", "aa_toggle"):
                     perf = None
                     completed_elapsed_ms = None
             else:
@@ -95,7 +95,7 @@ def ray_state(raw):
                     completed_elapsed_ms = values["elapsed_ms"]
             context.update(values)
     phase = context.get("phase", boot.get("phase", "boot"))
-    phase = {0: "preview", 1: "wait", 2: "trace", 3: "done"}.get(phase, phase)
+    phase = {0: "preview", 1: "wait", 2: "trace", 3: "done", 4: "aa"}.get(phase, phase)
     if boot.get("phase") in ("task_allocation_error", "framebuffer_error"):
         status, stage = "error", "Ray 启动失败"
     elif "ui_resume_done" in exits or "task_delete" in exits:
@@ -105,7 +105,8 @@ def ray_state(raw):
     else:
         status = phase
         stage = {"preview": "Ray 预览中", "wait": "Ray 等待静止",
-                 "trace": "Ray 追踪中", "done": "Ray 追踪完成"}.get(phase, "Ray 启动中")
+                 "trace": "Ray 追踪中", "aa": "Ray 抗锯齿处理中",
+                 "done": "Ray 追踪完成"}.get(phase, "Ray 启动中")
     samples = context.get("samples", 0)
     total = boot.get("pixels", boot.get("width", 256) * boot.get("height", 127))
     return {
@@ -114,12 +115,15 @@ def ray_state(raw):
         "samples": samples, "total_samples": total,
         "progress_percent": round(min(samples / total, 1) * 100, 2) if total else 0,
         "contrast": context.get("contrast", boot.get("contrast")),
+        "aa_enabled": context.get("aa_enabled", boot.get("aa_default")),
+        **{key: context.get(key) for key in ("yaw_mrad", "pitch_mrad", "roll_mrad")},
         "elapsed_ms": completed_elapsed_ms if completed_elapsed_ms is not None else
                       perf.get("elapsed_ms") if perf else None,
         **{key: perf.get(key) if perf else None for key in (
             "batch_samples", "trace_us", "preview_us", "lcd_us", "batch_max_us",
             "primary", "reflection", "refraction", "shadow", "sphere_tests", "plane_tests",
             "glass_exits", "tir_events", "floor_reflection",
+            "aa_us", "aa_rows", "aa_pixels", "aa_changed", "aa_batch_max_us",
             "camera_us", "intersect_us", "shadow_us", "shade_us", "reflection_us", "refraction_us", "stack_words")},
         "exit_phases": exits, "raw": perf, "boot": boot,
     }, packets[-1].start()

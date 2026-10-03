@@ -4,6 +4,7 @@
  * No host elapsed time is an estimate of ARM execution time. */
 #include "../../System/applications/user/ray_demo/RayCore.h"
 #include "../../System/applications/user/ray_demo/RaySession.h"
+#include "../../System/applications/user/ray_demo/RayPost.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,6 +16,7 @@
     return 1; } } while (0)
 static uint8_t guarded[RAY_PIXELS + 2u * GUARD];
 static uint8_t direct[RAY_PIXELS], again[RAY_PIXELS];
+static uint8_t post_whole[RAY_PIXELS];
 static uint8_t visits[RAY_PIXELS];
 static unsigned observe, observed, duplicate, out_of_bounds;
 static unsigned pass_samples[3];
@@ -83,6 +85,86 @@ static int unit_finite(RayVec3 direction) {
     return isfinite(direction.x) && isfinite(direction.y) && isfinite(direction.z) &&
            fabsf(direction.x * direction.x + direction.y * direction.y +
                  direction.z * direction.z - 1.0f) < 0.0001f;
+}
+
+static float check_dot(RayVec3 a, RayVec3 b) {
+    return a.x * b.x + a.y * b.y + a.z * b.z;
+}
+
+static int camera_basis_valid(const RayCamera *camera) {
+    const RayVec3 cross = {camera->right.y * camera->up.z - camera->right.z * camera->up.y,
+                          camera->right.z * camera->up.x - camera->right.x * camera->up.z,
+                          camera->right.x * camera->up.y - camera->right.y * camera->up.x};
+    return unit_finite(camera->forward) && unit_finite(camera->right) && unit_finite(camera->up) &&
+           fabsf(check_dot(camera->forward, camera->right)) < 0.0001f &&
+           fabsf(check_dot(camera->forward, camera->up)) < 0.0001f &&
+           fabsf(check_dot(camera->right, camera->up)) < 0.0001f &&
+           check_dot(cross, camera->forward) > 0.9999f;
+}
+
+static int check_orientation(const char *directory) {
+    RayCamera camera, original, tilted, horizontal;
+    RayStats stats;
+    RayCamera_Init(&camera);
+    REQUIRE(camera_basis_valid(&camera));
+    REQUIRE(fabsf(camera.pitch + 0.1001674212f) < 0.00001f && camera.roll == 0.0f);
+    original = camera;
+    REQUIRE(!RayCamera_Orient(&camera, 0.0f, 0.0f, 0.0f));
+    REQUIRE(!RayCamera_Orient(NULL, 0.0f, 0.0f, 0.0f));
+    REQUIRE(!RayCamera_Orient(&camera, NAN, 0.0f, 0.0f));
+    REQUIRE(!RayCamera_Orient(&camera, 0.0f, INFINITY, 0.0f));
+    REQUIRE(!RayCamera_Orient(&camera, 0.0f, 0.0f, -INFINITY));
+    REQUIRE(memcmp(&camera, &original, sizeof(camera)) == 0);
+    camera.pitch = NAN;
+    tilted = camera;
+    REQUIRE(!RayCamera_Orient(&camera, 0.1f, 0.1f, 0.1f));
+    REQUIRE(memcmp(&camera, &tilted, sizeof(camera)) == 0);
+    camera = original;
+    REQUIRE(RayCamera_Orient(&camera, 1.0e30f, 1.0e30f, -1.0e30f));
+    REQUIRE(camera_basis_valid(&camera));
+    REQUIRE(camera.pitch <= 1.396264f && camera.pitch >= -1.396264f);
+    REQUIRE(camera.yaw >= -3.141593f && camera.yaw <= 3.141593f);
+    REQUIRE(camera.roll >= -3.141593f && camera.roll <= 3.141593f);
+    REQUIRE(!RayCamera_Orient(&camera, 0.0f, 100.0f, 0.0f));
+    REQUIRE(RayCamera_Orient(&camera, -1.0e30f, -1.0e30f, 1.0e30f));
+    REQUIRE(camera_basis_valid(&camera) && camera.pitch >= -1.396264f);
+    for (unsigned i = 0; i < 400u; ++i) {
+        RayCamera_Orient(&camera, 0.73f, (i & 1u) ? -0.13f : 0.19f, 0.37f);
+        REQUIRE(camera_basis_valid(&camera));
+        REQUIRE(camera.pitch >= -1.396264f && camera.pitch <= 1.396264f);
+    }
+    horizontal = tilted = original;
+    REQUIRE(RayCamera_Orient(&horizontal, 0.3f, 0.0f, 0.0f));
+    REQUIRE(RayCamera_Orient(&tilted, 0.3f, 0.7f, 1.1f));
+    REQUIRE(RayCamera_Move(&horizontal, 0.2f, 0.03f));
+    REQUIRE(RayCamera_Move(&tilted, 0.2f, 0.03f));
+    REQUIRE(fabsf(horizontal.position.x - tilted.position.x) < 0.00001f);
+    REQUIRE(fabsf(horizontal.position.z - tilted.position.z) < 0.00001f);
+    REQUIRE(horizontal.position.y == original.position.y && tilted.position.y == original.position.y);
+    REQUIRE(camera_basis_valid(&horizontal) && camera_basis_valid(&tilted));
+
+    trace_direct(&original, 1u, direct, &stats);
+    RayPreview_Render(again, &original, 1u, NULL);
+    const float angles[][3] = {{0.0f, 0.25f, 0.0f}, {0.0f, 0.0f, 0.30f},
+                              {0.0f, 0.12f, 0.28f}, {0.0f, 10.0f, 1.5f}, {0.0f, -10.0f, -1.5f}};
+    const char *preview_names[] = {"preview-pitch.pgm", "preview-roll.pgm", "preview-tilt.pgm"};
+    for (unsigned i = 0; i < sizeof(angles) / sizeof(angles[0]); ++i) {
+        camera = original;
+        REQUIRE(RayCamera_Orient(&camera, angles[i][0], angles[i][1], angles[i][2]));
+        REQUIRE(camera_basis_valid(&camera));
+        uint8_t *pixels = new_frame();
+        memset(&stats, 0, sizeof(stats));
+        RayPreview_Render(pixels, &camera, 1u, &stats);
+        REQUIRE(guards_valid() && no_trace_stats(&stats));
+        REQUIRE(differences(pixels, again) > 1000u);
+        if (i < 3u) REQUIRE(save_pgm(directory, preview_names[i], pixels));
+        trace_direct(&camera, 1u, pixels, &stats);
+        REQUIRE(guards_valid() && stats.primary_rays == RAY_PIXELS);
+        REQUIRE(differences(pixels, direct) > 1000u);
+        if (i == 2u) REQUIRE(save_pgm(directory, "trace-tilt.pgm", pixels));
+    }
+    puts("CHECK_PASS camera_orthonormal_extreme_angles_atomic_invalid_horizontal_motion_pose_images_guards");
+    return 0;
 }
 
 static int check_refraction(void) {
@@ -310,6 +392,220 @@ static int check_cancellation_and_budget(void) {
     return 0;
 }
 
+static int check_pose_keys_and_aa_control(void) {
+    const unsigned pose_buttons[] = {RAY_PITCH_DOWN, RAY_PITCH_UP, RAY_ROLL_LEFT, RAY_ROLL_RIGHT};
+    RaySession session;
+    uint8_t *pixels = new_frame();
+    for (unsigned i = 0; i < sizeof(pose_buttons) / sizeof(pose_buttons[0]); ++i) {
+        RaySession_Init(&session, 0u);
+        const RayCamera original = session.camera;
+        reset_observer(); observe = 1u;
+        REQUIRE(pose_buttons[i] & RAY_MOTION_MASK);
+        REQUIRE(!session.aa_enabled);
+        RaySession_Update(&session, 39u, pose_buttons[i]);
+        REQUIRE(memcmp(&session.camera, &original, sizeof(original)) == 0);
+        REQUIRE(RaySession_Update(&session, 40u, pose_buttons[i]) & RAY_CHANGED);
+        REQUIRE(session.phase == RAY_PREVIEW && camera_basis_valid(&session.camera));
+        REQUIRE(i < 2u ? session.camera.pitch != original.pitch : session.camera.roll != original.roll);
+        RaySession_Update(&session, 55u, pose_buttons[i]);
+        REQUIRE(RaySession_TraceBatch(&session, pixels, 128u, 0u) == 0u);
+        RaySession_Update(&session, 70u, 0u);
+        REQUIRE(session.last_motion_ms == 70u);
+        REQUIRE(!(RaySession_Update(&session, 1069u, 0u) & RAY_STARTED));
+        REQUIRE(RaySession_Update(&session, 1070u, 0u) & RAY_STARTED);
+        REQUIRE(observed == 0u && no_trace_stats(&session.stats));
+        observe = 0u;
+    }
+    /* Held pitch at its limit still postpones the quiet deadline. */
+    RaySession_Init(&session, 0u);
+    REQUIRE(RayCamera_Orient(&session.camera, 0.0f, 100.0f, 0.0f));
+    RaySession_Update(&session, 40u, RAY_PITCH_UP);
+    RaySession_Update(&session, 2040u, RAY_PITCH_UP);
+    REQUIRE(session.phase == RAY_PREVIEW && session.last_motion_ms == 2040u);
+    RaySession_Update(&session, 2050u, 0u);
+    REQUIRE(!(RaySession_Update(&session, 3049u, 0u) & RAY_STARTED));
+    REQUIRE(RaySession_Update(&session, 3050u, 0u) & RAY_STARTED);
+
+    RaySession_Init(&session, 0u);
+    REQUIRE(RaySession_Update(&session, 20u, RAY_AA_TOGGLE) & RAY_CHANGED);
+    REQUIRE(session.aa_enabled == 1u);
+    const uint32_t toggled_generation = session.generation;
+    REQUIRE(!(RaySession_Update(&session, 21u, RAY_AA_TOGGLE) & RAY_CHANGED));
+    REQUIRE(session.aa_enabled == 1u && session.generation == toggled_generation);
+    RaySession_Update(&session, 22u, 0u);
+    REQUIRE(RaySession_Update(&session, 30u, RAY_AA_TOGGLE) & RAY_CHANGED);
+    REQUIRE(session.aa_enabled == 0u);
+    RaySession_Update(&session, 31u, 0u);
+    REQUIRE(RaySession_Update(&session, 40u, RAY_AA_TOGGLE) & RAY_CHANGED);
+    REQUIRE(session.aa_enabled == 1u);
+    RaySession_Update(&session, 41u, 0u);
+    REQUIRE(RaySession_Update(&session, 50u, RAY_RESET) & RAY_CHANGED);
+    REQUIRE(session.aa_enabled == 1u);
+    RaySession_Update(&session, 51u, 0u);
+    REQUIRE(RaySession_Update(&session, 1050u, 0u) & RAY_STARTED);
+    unsigned batches = 0u;
+    while (session.phase == RAY_TRACE) {
+        REQUIRE(++batches < 100u);
+        REQUIRE(RaySession_TraceBatch(&session, pixels, 512u, 0u) <= 512u);
+    }
+    REQUIRE(session.phase == RAY_POSTAA && session.traced_samples == RAY_PIXELS);
+    REQUIRE(session.stats.primary_rays == RAY_PIXELS);
+    RayStats direct_stats;
+    trace_direct(&session.camera, session.contrast, again, &direct_stats);
+    REQUIRE(memcmp(pixels, again, RAY_PIXELS) == 0);
+    const RayStats before_post = session.stats;
+    RayPostState pending_post;
+    RayPost_Init(&pending_post, pixels);
+    reset_observer(); observe = 1u;
+    REQUIRE(RayPost_Batch(&pending_post, pixels, 8u, 0u) == 8u);
+    REQUIRE(pending_post.row == 8u && !pending_post.done);
+    REQUIRE(memcmp(&before_post, &session.stats, sizeof(before_post)) == 0);
+    const RaySession post_session = session;
+    REQUIRE(RaySession_TraceBatch(&session, pixels, 512u, 0u) == 0u);
+    const unsigned cancellation_buttons[] = {RAY_PITCH_DOWN, RAY_ROLL_RIGHT, RAY_RESET,
+                                             RAY_CONTRAST, RAY_AA_TOGGLE};
+    for (unsigned i = 0; i < sizeof(cancellation_buttons) / sizeof(cancellation_buttons[0]); ++i) {
+        session = post_session;
+        REQUIRE(RaySession_Update(&session, 1090u, cancellation_buttons[i]) & RAY_CANCELLED);
+        REQUIRE(session.generation > post_session.generation && session.traced_samples == 0u);
+        REQUIRE(session.phase == ((cancellation_buttons[i] & RAY_MOTION_MASK) ? RAY_PREVIEW : RAY_WAIT));
+        REQUIRE(RaySession_TraceBatch(&session, pixels, 512u, 0u) == 0u);
+    }
+    RayPost_Init(&pending_post, NULL);
+    REQUIRE(RayPost_Batch(&pending_post, pixels, RAY_HEIGHT, 0u) == 0u);
+    observe = 0u;
+    REQUIRE(observed == 0u && guards_valid());
+    puts("CHECK_PASS pose_keys_limit_hold_1000ms_aa_edge_reset_preserves_aa_postaa_cancellation_zero_new_rays");
+    return 0;
+}
+
+static int finish_post(RayPostState *post, uint8_t *pixels, unsigned rows) {
+    unsigned batches = 0u;
+    while (!post->done) {
+        const unsigned count = RayPost_Batch(post, pixels, rows, 0u);
+        REQUIRE(count > 0u && count <= rows && ++batches <= RAY_HEIGHT);
+        REQUIRE(post->row <= RAY_HEIGHT && post->pixels_processed == (uint32_t)post->row * RAY_WIDTH);
+        REQUIRE(guards_valid());
+    }
+    REQUIRE(post->row == RAY_HEIGHT && !post->active && post->pixels_processed == RAY_PIXELS);
+    REQUIRE(RayPost_Batch(post, pixels, rows, 0u) == 0u);
+    return 0;
+}
+
+/* Independent pixel-area reference for white half-plane x < 64 + y/2.
+ * Integrate its horizontal coverage through each pixel with 32 vertical samples. */
+static unsigned diagonal_coverage(unsigned x, unsigned y) {
+    float covered = 0.0f;
+    for (unsigned sample = 0u; sample < 32u; ++sample) {
+        float width = 64.0f + 0.5f * ((float)y + ((float)sample + 0.5f) / 32.0f) - (float)x;
+        if (width < 0.0f) width = 0.0f;
+        if (width > 1.0f) width = 1.0f;
+        covered += width;
+    }
+    return (unsigned)(covered * (255.0f / 32.0f) + 0.5f);
+}
+
+static uint64_t diagonal_error(const uint8_t *pixels) {
+    uint64_t error = 0u;
+    for (unsigned y = 0u; y < RAY_HEIGHT; ++y)
+        for (unsigned x = 0u; x < RAY_WIDTH; ++x) {
+            const int difference = (int)pixels[y * RAY_WIDTH + x] - (int)diagonal_coverage(x, y);
+            error += (uint64_t)(difference * difference);
+        }
+    return error;
+}
+
+static int check_post(const char *directory) {
+    RayPostState post;
+    RayCamera camera;
+    RayStats stats;
+    /* Flat frames, axial steps and one-pixel axial lines stay byte-exact. */
+    for (unsigned pattern = 0u; pattern < 5u; ++pattern) {
+        uint8_t *pixels = new_frame();
+        for (unsigned y = 0u; y < RAY_HEIGHT; ++y)
+            for (unsigned x = 0u; x < RAY_WIDTH; ++x) {
+                unsigned value = 37u;
+                if (pattern == 1u) value = x < RAY_WIDTH / 2u ? 37u : 213u;
+                if (pattern == 2u) value = y < RAY_HEIGHT / 2u ? 37u : 213u;
+                if (pattern == 3u) value = x == RAY_WIDTH / 2u ? 255u : 0u;
+                if (pattern == 4u) value = y == RAY_HEIGHT / 2u ? 255u : 0u;
+                pixels[y * RAY_WIDTH + x] = (uint8_t)value;
+            }
+        memcpy(direct, pixels, RAY_PIXELS);
+        RayPost_Init(&post, pixels);
+        REQUIRE(!finish_post(&post, pixels, 7u));
+        REQUIRE(guards_valid() && memcmp(pixels, direct, RAY_PIXELS) == 0);
+        REQUIRE(post.pixels_changed == 0u);
+    }
+    for (unsigned y = 0u; y < RAY_HEIGHT; ++y)
+        for (unsigned x = 0u; x < RAY_WIDTH; ++x)
+            direct[y * RAY_WIDTH + x] = (float)x + 0.5f < 64.0f + 0.5f * ((float)y + 0.5f) ? 255u : 0u;
+    REQUIRE(save_pgm(directory, "aa-diagonal-before.pgm", direct));
+    uint8_t *pixels = new_frame();
+    memcpy(pixels, direct, RAY_PIXELS);
+    RayPost_Init(&post, pixels);
+    const RayPostState before_zero = post;
+    REQUIRE(RayPost_Batch(&post, pixels, 0u, 0u) == 0u);
+    REQUIRE(memcmp(&post, &before_zero, sizeof(post)) == 0);
+    REQUIRE(RayPost_Batch(&post, again, RAY_HEIGHT, 0u) == 0u);
+    REQUIRE(RayPost_Batch(NULL, pixels, RAY_HEIGHT, 0u) == 0u);
+    REQUIRE(RayPost_Batch(&post, NULL, RAY_HEIGHT, 0u) == 0u);
+    reset_observer(); observe = 1u;
+    REQUIRE(RayPost_Batch(&post, pixels, RAY_HEIGHT, 0u) == RAY_HEIGHT);
+    REQUIRE(post.done && !post.active && post.pixels_processed == RAY_PIXELS);
+    REQUIRE(post.pixels_changed == differences(pixels, direct) && post.pixels_changed > 0u);
+    const uint64_t error_before = diagonal_error(direct), error_after = diagonal_error(pixels);
+    REQUIRE(error_after < error_before);
+    REQUIRE(guards_valid());
+    memcpy(post_whole, pixels, RAY_PIXELS);
+    REQUIRE(save_pgm(directory, "aa-diagonal-after.pgm", pixels));
+    const unsigned row_caps[] = {1u, 3u, 7u, 31u};
+    for (unsigned i = 0u; i < sizeof(row_caps) / sizeof(row_caps[0]); ++i) {
+        pixels = new_frame();
+        memcpy(pixels, direct, RAY_PIXELS);
+        RayPost_Init(&post, pixels);
+        REQUIRE(!finish_post(&post, pixels, row_caps[i]));
+        REQUIRE(memcmp(pixels, post_whole, RAY_PIXELS) == 0);
+    }
+    pixels = new_frame();
+    memcpy(pixels, direct, RAY_PIXELS);
+    RayPost_Init(&post, pixels);
+    REQUIRE(RayPost_Batch(&post, pixels, 4u, 1u) == 4u);  /* Null clock respects row cap. */
+    RayPost_Init(&post, NULL);
+    REQUIRE(post.done && !post.active && post.pixels_processed == 0u);
+    REQUIRE(RayPost_Batch(&post, pixels, RAY_HEIGHT, 0u) == 0u);
+    RayPost_Init(&post, pixels);
+    fake_us = UINT32_MAX - 6u;
+    Ray_SetClock(advancing_clock);
+    REQUIRE(RayPost_Batch(&post, pixels, RAY_HEIGHT, 1u) == 1u);
+    Ray_SetClock(NULL);
+    observe = 0u;
+    REQUIRE(observed == 0u && guards_valid());
+    printf("CHECK_PASS post_flat_axial_steps_lines_exact_diagonal_SSE_before=%llu_after=%llu_batch_equal_guards_budget_wrap_zero_rays\n",
+           (unsigned long long)error_before, (unsigned long long)error_after);
+
+    /* Real scene AA uses no new ray samples, for the level and oblique cameras. */
+    for (unsigned pose = 0u; pose < 2u; ++pose) {
+        RayCamera_Init(&camera);
+        if (pose) REQUIRE(RayCamera_Orient(&camera, 0.0f, 0.12f, 0.28f));
+        trace_direct(&camera, 1u, direct, &stats);
+        const RayStats original_stats = stats;
+        pixels = new_frame();
+        memcpy(pixels, direct, RAY_PIXELS);
+        RayPost_Init(&post, pixels);
+        reset_observer(); observe = 1u;
+        REQUIRE(!finish_post(&post, pixels, 8u));
+        observe = 0u;
+        REQUIRE(observed == 0u && memcmp(&stats, &original_stats, sizeof(stats)) == 0);
+        REQUIRE(post.pixels_changed == differences(pixels, direct) && post.pixels_changed > 0u);
+        REQUIRE(save_pgm(directory, pose ? "trace-tilt-aa.pgm" : "trace-aa.pgm", pixels));
+        printf("CHECK_PASS post_scene_%s changed=%lu processed=%lu no_new_rays=1\n",
+               pose ? "tilt" : "level", (unsigned long)post.pixels_changed,
+               (unsigned long)post.pixels_processed);
+    }
+    return 0;
+}
+
 static int check_progressive(void) {
     RaySession session;
     RayStats stats;
@@ -346,7 +642,8 @@ int main(int argc, char **argv) {
     if (argc != 2) { fprintf(stderr, "usage: check_ray output_directory\n"); return 2; }
     Ray_SetClock(NULL);
     if (check_refraction() || check_core(argv[1]) || check_preview(argv[1]) || check_movement() ||
-        check_deadline_and_controls() || check_cancellation_and_budget() || check_progressive()) return 1;
+        check_orientation(argv[1]) || check_deadline_and_controls() || check_cancellation_and_budget() ||
+        check_pose_keys_and_aa_control() || check_progressive() || check_post(argv[1])) return 1;
     puts("CHECK_PASS all_host_ray_checks; physical_exit_and_ARM_timing_require_hardware");
     return 0;
 }
