@@ -20,6 +20,9 @@ SWAP_PRE_RE = re.compile(r"Swap Heap Pre-allocated: (\d+) KB")
 GAME_MEM_RE = re.compile(
     r"(?m)^DOOMG_MEM a=(\d+)/(\d+) z=(\d+)/(\d+) s=(\d+) w=(\d+)\r?$"
 )
+RAY_MEM_RE = re.compile(
+    r"(?m)^RAY_MEM a=(\d+)/(\d+) z=(\d+)/(\d+) s=(\d+) w=(\d+)\r?$"
+)
 ERROR_RE = re.compile(r"DOOM_ERROR ([^\r\n]+)")
 FRAME_RE = re.compile(r"DOOM_FRAME count=(\d+)")
 PERF_RE = re.compile(
@@ -48,6 +51,68 @@ DIAG_HEARTBEAT_RE = re.compile(
     r"allocated=(\d+) critical=(\d+)"
 )
 DIAG_STAGE_RE = re.compile(r"DOOM_DIAG_STAGE ([^\r\n]+)")
+RAY_LINE_RE = re.compile(r"(?m)^RAY_(BOOT|EVENT|PERF|EXIT)\b[^\r\n]*")
+RAY_FIELD_RE = re.compile(r"([a-z_]+)=([^\s]+)")
+
+
+def ray_state(raw):
+    """Keep one Ray launch and generation; retain ASCII protocol values."""
+    packets = list(RAY_LINE_RE.finditer(raw))
+    if not packets:
+        return None, -1
+    boots = [packet for packet in packets if packet[1] == "BOOT"]
+    starts = [packet for packet in boots if "phase=task_start" in packet[0] or
+              "phase=task_allocation_error" in packet[0]]
+    start = starts[-1].start() if starts else boots[0].start() if boots else packets[0].start()
+    context, boot, perf, event, exits = {}, {}, None, None, []
+    for packet in packets:
+        if packet.start() < start:
+            continue
+        values = {key: int(value) if re.fullmatch(r"-?\d+", value) else value
+                  for key, value in RAY_FIELD_RE.findall(packet[0])}
+        kind = packet[1]
+        if kind == "BOOT":
+            boot.update(values)
+        elif kind == "EXIT":
+            exits.append(values.get("phase"))
+        else:
+            if ("generation" in values and values.get("generation") != context.get("generation")):
+                perf = None
+                context = {}
+            if kind == "EVENT":
+                event = values.get("event")
+                if event in ("start", "cancel", "contrast", "reset"):
+                    perf = None
+            else:
+                perf = values
+            context.update(values)
+    phase = context.get("phase", boot.get("phase", "boot"))
+    phase = {0: "preview", 1: "wait", 2: "trace", 3: "done"}.get(phase, phase)
+    if boot.get("phase") in ("task_allocation_error", "framebuffer_error"):
+        status, stage = "error", "Ray 启动失败"
+    elif "ui_resume_done" in exits or "task_delete" in exits:
+        status, stage = "exited", "Ray 已退出"
+    elif exits:
+        status, stage = "exiting", "Ray 退出处理中"
+    else:
+        status = phase
+        stage = {"preview": "Ray 预览中", "wait": "Ray 等待静止",
+                 "trace": "Ray 追踪中", "done": "Ray 追踪完成"}.get(phase, "Ray 启动中")
+    samples = context.get("samples", 0)
+    total = boot.get("pixels", boot.get("width", 256) * boot.get("height", 127))
+    return {
+        "status": status, "stage": stage, "phase": phase, "event": event,
+        "generation": context.get("generation"), "pass": context.get("pass", 0),
+        "samples": samples, "total_samples": total,
+        "progress_percent": round(min(samples / total, 1) * 100, 2) if total else 0,
+        "contrast": context.get("contrast", boot.get("contrast")),
+        "elapsed_ms": perf.get("elapsed_ms") if perf else None,
+        **{key: perf.get(key) if perf else None for key in (
+            "batch_samples", "trace_us", "preview_us", "lcd_us", "batch_max_us",
+            "primary", "reflection", "shadow", "sphere_tests", "plane_tests",
+            "camera_us", "intersect_us", "shadow_us", "shade_us", "reflection_us", "stack_words")},
+        "exit_phases": exits, "raw": perf, "boot": boot,
+    }, packets[-1].start()
 
 
 def fields(line):
@@ -100,7 +165,10 @@ def state():
     last_game_perf = raw.rfind("DOOMG_PERF")
     last_game_exit = raw.rfind("DOOMG_EXIT")
     last_game = max(last_game_boot, last_game_perf, last_game_exit)
-    if last_game > max(last_start, last_lite_perf, last_lite_exit):
+    ray, last_ray = ray_state(raw)
+    if last_ray > max(last_game, last_start, last_lite_perf, last_lite_exit, raw.rfind("DOOM_EXIT")):
+        mode = "ray"
+    elif last_game > max(last_start, last_lite_perf, last_lite_exit):
         mode = "game"
     elif last_start > max(last_lite_perf, last_lite_exit):
         mode = "full"
@@ -160,6 +228,26 @@ def state():
     )
     if mode == "game" and memory_kb is None:
         memory_history = []
+    if mode == "ray":
+        ray_start = raw.rfind("RAY_BOOT phase=task_start")
+        ray_memory = [(m.start(), *(int(value) for value in m.groups()))
+                      for m in RAY_MEM_RE.finditer(raw) if m.start() >= ray_start]
+        last_ray_memory = ray_memory[-1] if ray_memory else None
+        ray_memory_position = last_ray_memory[0] if last_ray_memory else -1
+        ray_exit = raw.rfind("RAY_EXIT")
+        if ray_exit >= ray_start and ray_exit > max(ray_memory_position, latest_system_mem):
+            memory_kb = zram_kb = heap_preallocated_kb = None
+        elif last_ray_memory and ray_memory_position > latest_system_mem:
+            _, allocated, capacity, used, zcapacity, sram, swap = last_ray_memory
+            memory_kb = (round(allocated / 1024, 2), round(capacity / 1024, 2))
+            zram_kb = (round(used / 1024, 2), round(zcapacity / 1024, 2))
+            heap_preallocated_kb = (round(sram / 1024, 2), round(swap / 1024, 2))
+        elif latest_system_mem < ray_start:
+            memory_kb = zram_kb = heap_preallocated_kb = None
+        memory_history = (sorted(
+            [(position, allocated) for position, allocated, _ in mem] +
+            [(sample[0], sample[1] / 1024) for sample in ray_memory])
+                          if memory_kb is not None else [])
     fast_mode = mode == "full" and mode_for_start(raw, last_start).get("fast") == 1
     errors = ERROR_RE.findall(run if mode == "full" else raw)
     frames = FRAME_RE.findall(run)
@@ -182,7 +270,9 @@ def state():
     last_status = raw.rfind("=============SYSTEM STATUS")
     latest_task_list = raw[last_status:] if last_status >= 0 else ""
     doom_task_visible = bool(re.search(r"(?m)^Doom\s+[XRBSD]\s+", latest_task_list))
-    if mode == "game":
+    if mode == "ray":
+        stage = ray["stage"]
+    elif mode == "game":
         prefix = game_label
         if any("phase=ui_resume_done" in line for line in game_exits):
             stage = prefix + " 已退出"
@@ -219,10 +309,11 @@ def state():
         "zram_kb": zram_kb,
         "heap_preallocated_kb": heap_preallocated_kb,
         "memory_history": [value for _, value in memory_history[-40:]],
-        "starts": raw.count("DOOM_START") + raw.count("DOOMG_BOOT phase=task_start"),
-        "mode": "game" if mode == "game" else "hybrid" if fast_mode else "legacy" if mode == "full"
+        "starts": raw.count("DOOM_START") + raw.count("DOOMG_BOOT phase=task_start") + raw.count("RAY_BOOT phase=task_start"),
+        "mode": "ray" if mode == "ray" else "game" if mode == "game" else "hybrid" if fast_mode else "legacy" if mode == "full"
                 else "lite" if mode.startswith("lite") else "idle",
         "stage": stage,
+        "ray": ray if mode == "ray" else None,
         "zone_verified": raw.count("DOOM_ZONE verified"),
         "errors": len(errors),
         "frames": len(frames),
@@ -390,7 +481,7 @@ def state():
             "critical": int(last_diagnostic[3]) if last_diagnostic else None,
             "last_stage": diagnostic_stages[-1] if diagnostic_stages else None,
         } if last_diagnostic or diagnostic_stages else None,
-        "exits": raw.count("DOOM_EXIT") + raw.count("DOOMG_EXIT phase=task_delete"),
+        "exits": raw.count("DOOM_EXIT") + raw.count("DOOMG_EXIT phase=task_delete") + raw.count("RAY_EXIT phase=task_delete"),
         "panics": raw.lower().count("system panic"),
         "latest_error": errors[-1] if errors else None,
         "lines": lines[-120:],

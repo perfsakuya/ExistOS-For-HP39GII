@@ -304,6 +304,98 @@ class DashboardStateTest(unittest.TestCase):
         self.assertIsNone(s["game_ui_kb"])
         self.assertIsNone(s["game_test_kb"])
 
+    def test_ray_metrics_generation_and_exit_phases(self):
+        boot = "RAY_BOOT phase=task_start width=256 height=127 contrast=2\n"
+        perf = ("RAY_PERF generation=1 phase=trace pass=2 samples=8192 batch_samples=128 "
+                "elapsed_ms=250 trace_us=200000 preview_us=1300 lcd_us=6000 batch_max_us=8000 "
+                "primary=8192 reflection=500 shadow=3400 sphere_tests=35000 plane_tests=11000 "
+                "camera_us=1000 intersect_us=140000 shadow_us=30000 shade_us=20000 "
+                "reflection_us=9000 stack_words=2048\n")
+        s = self.read(boot + "RAY_EVENT event=start generation=1 phase=trace samples=0 pass=0\n" + perf)
+        self.assertEqual(s["mode"], "ray")
+        self.assertEqual(s["stage"], "Ray 追踪中")
+        self.assertEqual(s["starts"], 1)
+        self.assertEqual(s["ray"]["samples"], 8192)
+        self.assertEqual(s["ray"]["progress_percent"], 25.2)
+        self.assertEqual(s["ray"]["primary"], 8192)
+        self.assertEqual(s["ray"]["trace_us"], 200000)
+        self.assertEqual(s["ray"]["raw"]["phase"], "trace")
+        self.assertEqual(s["ray"]["stack_words"], 2048)
+        cancelled = boot + perf + "RAY_EVENT event=cancel generation=2 phase=wait samples=0 pass=0\n"
+        s = self.read(cancelled)
+        self.assertEqual(s["stage"], "Ray 等待静止")
+        self.assertEqual(s["ray"]["generation"], 2)
+        self.assertEqual(s["ray"]["samples"], 0)
+        self.assertIsNone(s["ray"]["raw"])
+        self.assertIsNone(s["ray"]["primary"])
+        s = self.read(cancelled + "RAY_EXIT phase=key\nRAY_EXIT phase=key_release\n")
+        self.assertEqual(s["stage"], "Ray 退出处理中")
+        s = self.read(cancelled + "RAY_EXIT phase=key\nRAY_EXIT phase=key_release\n"
+                      "RAY_EXIT phase=ui_resume_done\nRAY_EXIT phase=task_delete\n")
+        self.assertEqual(s["stage"], "Ray 已退出")
+        self.assertEqual(s["exits"], 1)
+        self.assertEqual(s["ray"]["exit_phases"],
+                         ["key", "key_release", "ui_resume_done", "task_delete"])
+
+    def test_ray_done_new_launch_and_doom_mode_boundaries(self):
+        boot = "RAY_BOOT phase=task_start pixels=32512 contrast=1\n"
+        ray = (boot + "RAY_PERF generation=4 phase=2 pass=2 samples=32512 elapsed_ms=4000 "
+               "primary=32512 trace_us=3000000\n"
+               "RAY_EVENT event=done generation=4 phase=3 samples=32512 pass=3\n")
+        s = self.read(ray)
+        self.assertEqual(s["stage"], "Ray 追踪完成")
+        self.assertEqual(s["ray"]["progress_percent"], 100)
+        self.assertEqual(s["ray"]["trace_us"], 3000000)
+        s = self.read(ray + "RAY_EXIT phase=task_delete\n" + boot)
+        self.assertEqual(s["stage"], "Ray 启动中")
+        self.assertEqual(s["starts"], 2)
+        self.assertEqual(s["ray"]["samples"], 0)
+        self.assertIsNone(s["ray"]["raw"])
+        s = self.read(ray + "DOOM_START allocated=2\n")
+        self.assertEqual(s["mode"], "legacy")
+        self.assertIsNone(s["ray"])
+        s = self.read("DOOM_START allocated=2\nDOOM_EXIT outcome=0\n" + ray)
+        self.assertEqual(s["mode"], "ray")
+        self.assertIsNone(s["performance"])
+        s = self.read(ray + "RAY_EXIT phase=task_delete\n"
+                      "RAY_BOOT phase=task_allocation_error\n")
+        self.assertEqual(s["stage"], "Ray 启动失败")
+        self.assertEqual(s["ray"]["samples"], 0)
+        self.assertIsNone(s["ray"]["raw"])
+
+    def test_ray_same_generation_cancel_clears_batch_and_preserves_ascii_log(self):
+        raw = ("RAY_BOOT phase=task_start\r\n"
+               "RAY_PERF generation=7 phase=trace samples=2048 primary=2048 elapsed_ms=99\r\n"
+               "RAY_EVENT event=cancel generation=7 phase=preview samples=0 pass=0\r\n")
+        self.log.write_bytes(raw.encode("ascii"))
+        s = serial_dashboard.state()
+        self.assertIsNone(s["ray"]["raw"])
+        self.assertEqual(s["ray"]["samples"], 0)
+        self.assertEqual(s["lines"][-1], raw.splitlines()[-1])
+        self.assertEqual(self.log.read_bytes(), raw.encode("ascii"))
+
+    def test_ray_memory_units_and_launch_exit_boundaries(self):
+        idle = ("Allocate MEM:57/276 KB\nZRAM:24/92 KB\n"
+                "SRAM Heap Pre-allocated: 58 KB\nSwap Heap Pre-allocated: 0 KB\n")
+        boot = "RAY_BOOT phase=task_start width=256 height=127 renderer_heap_bytes=0 task_stack_bytes=8192\n"
+        s = self.read(idle + boot)
+        self.assertIsNone(s["memory_kb"])
+        self.assertEqual(s["memory_history"], [])
+        s = self.read(idle + boot + "RAY_MEM a=65536/282624 z=25088/94208 s=71680 w=1024\n"
+                      "RAY_PERF generation=1 phase=wait samples=0 stack_words=-1\n")
+        self.assertEqual(s["memory_kb"], (64, 276))
+        self.assertEqual(s["zram_kb"], (24.5, 92))
+        self.assertEqual(s["heap_preallocated_kb"], (70, 1))
+        self.assertEqual(s["memory_history"][-1], 64)
+        self.assertEqual(s["ray"]["stack_words"], -1)
+        self.assertEqual(s["ray"]["boot"]["renderer_heap_bytes"], 0)
+        self.assertEqual(s["ray"]["boot"]["task_stack_bytes"], 8192)
+        s = self.read(idle + boot + "RAY_MEM a=65536/282624 z=25088/94208 s=71680 w=1024\n"
+                      "RAY_EXIT phase=ui_resume_done\nRAY_EXIT phase=task_delete\n")
+        self.assertIsNone(s["memory_kb"])
+        s = self.read(idle + boot + "RAY_EXIT phase=task_delete\n" + idle)
+        self.assertEqual(s["memory_kb"], (57, 276))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -99,12 +99,13 @@ static void printGameMemory(void) {
 
 void vTask1(void *par1) {
     extern volatile int SkyOS_DoomGameRunning;
+    extern volatile int SkyOS_RayRunning;
 #ifdef SKYOS_BUILD_LEGACY_DOOM
     extern volatile int SkyOS_DoomFastRunning;
 #endif
     while (1) {
         /* Active renderers emit their own compact timing counters. */
-        int rendering = SkyOS_DoomGameRunning;
+        int rendering = SkyOS_DoomGameRunning | SkyOS_RayRunning;
 #ifdef SKYOS_BUILD_LEGACY_DOOM
         rendering |= SkyOS_DoomFastRunning;
 #endif

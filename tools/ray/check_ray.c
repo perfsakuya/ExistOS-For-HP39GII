@@ -1,0 +1,296 @@
+/* Host-only checks of the production Ray core, preview and session APIs.
+ * Compile RayCore.c with -DRay_TracePixel=Ray_TestRealTracePixel so this
+ * independent observer can prove which pixels the production session samples.
+ * No host elapsed time is an estimate of ARM execution time. */
+#include "../../System/applications/user/ray_demo/RayCore.h"
+#include "../../System/applications/user/ray_demo/RaySession.h"
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define GUARD 32u
+#define REQUIRE(expr) do { if (!(expr)) { \
+    fprintf(stderr, "CHECK_FAIL line=%u condition=%s\n", (unsigned)__LINE__, #expr); \
+    return 1; } } while (0)
+static uint8_t guarded[RAY_PIXELS + 2u * GUARD];
+static uint8_t direct[RAY_PIXELS], again[RAY_PIXELS];
+static uint8_t visits[RAY_PIXELS];
+static unsigned observe, observed, duplicate, out_of_bounds;
+static unsigned pass_samples[3];
+static uint32_t fake_us;
+
+uint8_t Ray_TestRealTracePixel(const RayCamera *, unsigned, unsigned, unsigned, RayStats *);
+uint8_t Ray_TracePixel(const RayCamera *camera, unsigned x, unsigned y,
+                      unsigned contrast, RayStats *stats) {
+    if (observe) {
+        if (x >= RAY_WIDTH || y >= RAY_HEIGHT) ++out_of_bounds;
+        else {
+            const unsigned i = y * RAY_WIDTH + x;
+            if (visits[i]++) ++duplicate;
+            ++observed;
+            ++pass_samples[(!(x % 4u) && !(y % 4u)) ? 0u :
+                           (!(x % 2u) && !(y % 2u)) ? 1u : 2u];
+        }
+    }
+    return Ray_TestRealTracePixel(camera, x, y, contrast, stats);
+}
+
+static uint32_t advancing_clock(void) { fake_us += 13u; return fake_us; }
+static void reset_observer(void) {
+    memset(visits, 0, sizeof(visits));
+    memset(pass_samples, 0, sizeof(pass_samples));
+    observed = duplicate = out_of_bounds = 0u;
+}
+static uint8_t *new_frame(void) {
+    memset(guarded, 0xa5, sizeof(guarded));
+    return guarded + GUARD;
+}
+static int guards_valid(void) {
+    for (unsigned i = 0; i < GUARD; ++i)
+        if (guarded[i] != 0xa5 || guarded[GUARD + RAY_PIXELS + i] != 0xa5) return 0;
+    return 1;
+}
+static unsigned differences(const uint8_t *a, const uint8_t *b) {
+    unsigned result = 0;
+    for (unsigned i = 0; i < RAY_PIXELS; ++i) result += a[i] != b[i];
+    return result;
+}
+static int save_pgm(const char *directory, const char *name, const uint8_t *pixels) {
+    char path[1024];
+    if (snprintf(path, sizeof(path), "%s/%s", directory, name) >= (int)sizeof(path)) return 0;
+    FILE *file = fopen(path, "wb");
+    if (!file) return 0;
+    fprintf(file, "P5\n%u %u\n255\n", RAY_WIDTH, RAY_HEIGHT);
+    const int wrote = fwrite(pixels, 1u, RAY_PIXELS, file) == RAY_PIXELS;
+    return fclose(file) == 0 && wrote;
+}
+static void trace_direct(const RayCamera *camera, unsigned contrast,
+                         uint8_t *pixels, RayStats *stats) {
+    memset(stats, 0, sizeof(*stats));
+    for (unsigned y = 0; y < RAY_HEIGHT; ++y)
+        for (unsigned x = 0; x < RAY_WIDTH; ++x)
+            pixels[y * RAY_WIDTH + x] = Ray_TracePixel(camera, x, y, contrast, stats);
+}
+static int no_trace_stats(const RayStats *stats) {
+    return !stats->primary_rays && !stats->reflection_rays && !stats->shadow_rays &&
+           !stats->sphere_tests && !stats->plane_tests && !stats->hits;
+}
+
+static int check_core(const char *directory) {
+    RayCamera camera, moved;
+    RayStats stats, unused = {0};
+    RayCamera_Init(&camera);
+    REQUIRE(camera.position.x == 0.0f && camera.position.z == -5.5f);
+    REQUIRE(fabsf(camera.position.y - 1.45f) < 0.0001f);
+    REQUIRE(camera.yaw == 0.0f);
+    for (unsigned c = 0; c < 3u; ++c) {
+        trace_direct(&camera, c, direct, &stats);
+        REQUIRE(stats.primary_rays == RAY_PIXELS);
+        REQUIRE(stats.reflection_rays > 0u && stats.shadow_rays > 0u);
+        REQUIRE(stats.sphere_tests > RAY_PIXELS && stats.plane_tests >= RAY_PIXELS);
+        trace_direct(&camera, c, again, &unused);
+        REQUIRE(memcmp(direct, again, RAY_PIXELS) == 0);
+        if (c) REQUIRE(differences(direct, guarded + GUARD) > 100u);
+        memcpy(guarded + GUARD, direct, RAY_PIXELS);
+        char name[32];
+        snprintf(name, sizeof(name), "trace-c%u.pgm", c + 1u);
+        REQUIRE(save_pgm(directory, name, direct));
+    }
+    trace_direct(&camera, 1u, direct, &stats);
+    moved = camera;
+    REQUIRE(RayCamera_Move(&moved, 0.3f, 0.15f));
+    trace_direct(&moved, 1u, again, &unused);
+    REQUIRE(differences(direct, again) > 1000u);
+    memset(&stats, 0, sizeof(stats));
+    REQUIRE(Ray_TracePixel(NULL, 0u, 0u, 0u, &stats) == 0u);
+    REQUIRE(Ray_TracePixel(&camera, RAY_WIDTH, 0u, 0u, &stats) == 0u);
+    REQUIRE(Ray_TracePixel(&camera, 0u, RAY_HEIGHT, 0u, &stats) == 0u);
+    REQUIRE(no_trace_stats(&stats));
+    REQUIRE(Ray_MapGray(NAN, 0u) == 0u && Ray_MapGray(INFINITY, 0u) == 255u);
+    REQUIRE(Ray_MapGray(-INFINITY, 0u) == 0u);
+    REQUIRE(Ray_MapGray(0.4f, 99u) == Ray_MapGray(0.4f, 2u));
+    for (unsigned c = 0; c < 3u; ++c) {
+        unsigned previous = 0u;
+        for (unsigned i = 0; i <= 256u; ++i) {
+            const unsigned value = Ray_MapGray((float)i / 256.0f, c);
+            REQUIRE(value >= previous);
+            previous = value;
+        }
+    }
+    puts("CHECK_PASS core_determinism_view_contrast_api");
+    return 0;
+}
+
+static int check_preview(const char *directory) {
+    RayCamera camera, moved;
+    RayStats stats;
+    RayCamera_Init(&camera);
+    for (unsigned c = 0; c < 3u; ++c) {
+        uint8_t *pixels = new_frame();
+        memset(&stats, 0, sizeof(stats));
+        reset_observer(); observe = 1u;
+        RayPreview_Render(pixels, &camera, c, &stats);
+        observe = 0u;
+        REQUIRE(guards_valid() && no_trace_stats(&stats) && observed == 0u);
+        REQUIRE(stats.preview_triangles > 0u && stats.preview_pixels > 0u);
+        RayPreview_Render(again, &camera, c, NULL);
+        REQUIRE(memcmp(pixels, again, RAY_PIXELS) == 0);
+        if (c == 1u) {
+            REQUIRE(save_pgm(directory, "preview.pgm", pixels));
+            memcpy(direct, pixels, RAY_PIXELS);
+        }
+    }
+    moved = camera;
+    REQUIRE(RayCamera_Move(&moved, 0.2f, 0.15f));
+    RayPreview_Render(again, &moved, 1u, NULL);
+    REQUIRE(differences(direct, again) > 100u);
+    puts("CHECK_PASS preview_frame_guards_determinism_view_zero_rt");
+    return 0;
+}
+
+static int check_movement(void) {
+    RayCamera camera, original;
+    RayCamera_Init(&camera);
+    original = camera;
+    REQUIRE(!RayCamera_Move(&camera, 100.0f, 0.0f));
+    REQUIRE(memcmp(&camera, &original, sizeof(camera)) == 0);
+    REQUIRE(!RayCamera_Move(&camera, NAN, 0.0f));
+    REQUIRE(!RayCamera_Move(&camera, 0.0f, INFINITY));
+    REQUIRE(memcmp(&camera, &original, sizeof(camera)) == 0);
+    for (unsigned i = 0; i < 1000u; ++i) {
+        RayCamera_Move(&camera, 0.05f, 0.137f);
+        REQUIRE(camera.position.x >= -6.0f && camera.position.x <= 6.0f);
+        REQUIRE(camera.position.z >= -7.0f && camera.position.z <= 7.0f);
+        REQUIRE(camera.yaw >= -3.141593f && camera.yaw <= 3.141593f);
+        REQUIRE(fabsf(camera.position.y - 1.45f) < 0.0001f);
+    }
+    for (unsigned i = 0; i < RAY_SPHERE_COUNT; ++i) {
+        RayCamera_Init(&camera);
+        camera.position.x = Ray_Spheres[i].center.x;
+        camera.position.z = Ray_Spheres[i].center.z - Ray_Spheres[i].radius - 0.4f;
+        original = camera;
+        REQUIRE(!RayCamera_Move(&camera, 2.0f * Ray_Spheres[i].radius + 0.8f, 0.0f));
+        REQUIRE(memcmp(&camera, &original, sizeof(camera)) == 0);
+    }
+    puts("CHECK_PASS movement_world_bounds_segment_collision_finite_input");
+    return 0;
+}
+
+static int check_deadline_and_controls(void) {
+    RaySession session;
+    uint8_t *pixels = new_frame();
+    RaySession_Init(&session, 0u);
+    const RayCamera initial = session.camera;
+    reset_observer(); observe = 1u;
+    RaySession_Update(&session, 39u, RAY_UP);
+    REQUIRE(memcmp(&initial, &session.camera, sizeof(initial)) == 0);
+    RaySession_Update(&session, 40u, RAY_UP);
+    REQUIRE(session.camera.position.z > initial.position.z);
+    RaySession_Update(&session, 50u, RAY_UP);
+    REQUIRE(RaySession_TraceBatch(&session, pixels, 100u, 0u) == 0u);
+    RaySession_Update(&session, 65u, 0u);
+    REQUIRE(session.last_motion_ms == 65u);
+    REQUIRE(!(RaySession_Update(&session, 1064u, 0u) & RAY_STARTED));
+    REQUIRE(session.phase == RAY_WAIT && session.traced_samples == 0u);
+    REQUIRE(RaySession_Update(&session, 1065u, 0u) & RAY_STARTED);
+    REQUIRE(observed == 0u && no_trace_stats(&session.stats));
+    observe = 0u;
+    RaySession_Init(&session, UINT32_MAX - 500u);
+    REQUIRE(!(RaySession_Update(&session, (uint32_t)(UINT32_MAX - 500u + 999u), 0u) & RAY_STARTED));
+    REQUIRE(RaySession_Update(&session, (uint32_t)(UINT32_MAX - 500u + 1000u), 0u) & RAY_STARTED);
+    RaySession_Init(&session, 0u);
+    const unsigned first_contrast = session.contrast;
+    const uint32_t first_generation = session.generation;
+    for (unsigned i = 1u; i <= 3u; ++i) {
+        REQUIRE(RaySession_Update(&session, i * 20u, RAY_CONTRAST) & RAY_CHANGED);
+        REQUIRE(session.contrast == (first_contrast + i) % 3u);
+        const uint32_t generation = session.generation;
+        REQUIRE(!(RaySession_Update(&session, i * 20u + 1u, RAY_CONTRAST) & RAY_CHANGED));
+        REQUIRE(session.generation == generation);
+        RaySession_Update(&session, i * 20u + 2u, 0u);
+    }
+    REQUIRE(session.contrast == first_contrast && session.generation == first_generation + 3u);
+    RaySession_Update(&session, 120u, RAY_UP | RAY_RIGHT);
+    REQUIRE(RaySession_Update(&session, 121u, RAY_RESET) & RAY_CHANGED);
+    REQUIRE(memcmp(&initial, &session.camera, sizeof(initial)) == 0);
+    REQUIRE(no_trace_stats(&session.stats) && guards_valid());
+    puts("CHECK_PASS no_trace_during_movement_999ms_1000ms_clock_wrap_controls");
+    return 0;
+}
+
+static int check_cancellation_and_budget(void) {
+    RaySession session;
+    uint8_t *pixels = new_frame();
+    RaySession_Init(&session, 0u);
+    RaySession_Update(&session, 1000u, 0u);
+    REQUIRE(RaySession_TraceBatch(&session, pixels, 0u, 0u) == 0u);
+    REQUIRE(RaySession_TraceBatch(&session, pixels, 19u, 0u) == 19u);
+    const uint32_t generation = session.generation;
+    REQUIRE(RaySession_Update(&session, 1040u, RAY_RIGHT) & RAY_CANCELLED);
+    REQUIRE(session.generation > generation && session.cancellations == 1u);
+    REQUIRE(session.traced_samples == 0u && session.phase == RAY_PREVIEW);
+    REQUIRE(RaySession_TraceBatch(&session, pixels, 100u, 0u) == 0u);
+    RaySession_Update(&session, 1053u, 0u);
+    REQUIRE(session.last_motion_ms == 1053u);
+    REQUIRE(!(RaySession_Update(&session, 2052u, 0u) & RAY_STARTED));
+    REQUIRE(RaySession_Update(&session, 2053u, 0u) & RAY_STARTED);
+    ++session.generation;
+    REQUIRE(RaySession_TraceBatch(&session, pixels, 11u, 0u) == 0u);
+    session.generation = session.trace_generation;
+    REQUIRE(RaySession_TraceBatch(NULL, pixels, 11u, 0u) == 0u);
+    REQUIRE(RaySession_TraceBatch(&session, NULL, 11u, 0u) == 0u);
+    REQUIRE(RaySession_Update(NULL, 0u, 0u) == 0u);
+    RaySession_Init(NULL, 0u);
+    Ray_SetClock(NULL);
+    REQUIRE(Ray_Clock() == 0u);
+    REQUIRE(RaySession_TraceBatch(&session, pixels, 11u, 1u) == 11u);
+    fake_us = UINT32_MAX - 64u;
+    Ray_SetClock(advancing_clock);
+    REQUIRE(RaySession_TraceBatch(&session, pixels, 99u, 32u) == 8u);
+    Ray_SetClock(NULL);
+    REQUIRE(guards_valid());
+    puts("CHECK_PASS cancellation_generation_gate_bounded_batch_budget_clock_wrap_api");
+    return 0;
+}
+
+static int check_progressive(void) {
+    RaySession session;
+    RayStats stats;
+    for (unsigned c = 0u; c < 3u; ++c) {
+        uint8_t *pixels = new_frame();
+        RaySession_Init(&session, 0u);
+        session.contrast = c;
+        REQUIRE(RaySession_Update(&session, 1000u, 0u) & RAY_STARTED);
+        trace_direct(&session.camera, c, direct, &stats);
+        reset_observer(); observe = 1u;
+        unsigned batches = 0u;
+        while (session.phase == RAY_TRACE) {
+            const unsigned done = RaySession_TraceBatch(&session, pixels, 113u, 0u);
+            REQUIRE(done <= 113u && ++batches < 400u);
+            REQUIRE(guards_valid());
+        }
+        observe = 0u;
+        REQUIRE(session.phase == RAY_DONE && session.pass == 3u);
+        REQUIRE(session.traced_samples == RAY_PIXELS && observed == RAY_PIXELS);
+        REQUIRE(session.stats.primary_rays == RAY_PIXELS && duplicate == 0u && out_of_bounds == 0u);
+        REQUIRE(pass_samples[0] == 2048u && pass_samples[1] == 6144u && pass_samples[2] == 24320u);
+        for (unsigned i = 0; i < RAY_PIXELS; ++i) REQUIRE(visits[i] == 1u);
+        REQUIRE(memcmp(pixels, direct, RAY_PIXELS) == 0);
+        REQUIRE(RaySession_TraceBatch(&session, pixels, 100u, 0u) == 0u);
+        printf("CHECK_PASS progressive_c%u unique=%u passes=%u/%u/%u batches=%u direct_equal=1\n",
+               c + 1u, observed, pass_samples[0], pass_samples[1], pass_samples[2], batches);
+        REQUIRE(RaySession_Update(&session, 1040u, RAY_LEFT) & RAY_CHANGED);
+        REQUIRE(session.phase == RAY_PREVIEW && session.traced_samples == 0u);
+    }
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    if (argc != 2) { fprintf(stderr, "usage: check_ray output_directory\n"); return 2; }
+    Ray_SetClock(NULL);
+    if (check_core(argv[1]) || check_preview(argv[1]) || check_movement() ||
+        check_deadline_and_controls() || check_cancellation_and_budget() || check_progressive()) return 1;
+    puts("CHECK_PASS all_host_ray_checks; physical_exit_and_ARM_timing_require_hardware");
+    return 0;
+}

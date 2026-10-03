@@ -39,7 +39,16 @@ list(APPEND SYS_SRCS
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_lite/DoomTestMap.c
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_lite/DoomGameApp.c
     ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/doom_lite/DoomLiteHud.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/ray_demo/RayCore.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/ray_demo/RayPreview.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/ray_demo/RaySession.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/applications/user/ray_demo/RayDemo.c
 )
+set_source_files_properties(
+    applications/user/ray_demo/RayCore.c
+    applications/user/ray_demo/RayPreview.c
+    applications/user/ray_demo/RaySession.c
+    PROPERTIES COMPILE_OPTIONS "-O2")
 option(SKYOS_BUILD_LEGACY_DOOM "Build the experimental full Doom ports" OFF)
 if(SKYOS_BUILD_LEGACY_DOOM)
     file(GLOB DOOM_ENGINE_SRCS CONFIGURE_DEPENDS

@@ -61,6 +61,17 @@
   <div class="metric"><div class="label">碰撞每 tic / 单次峰值</div><div class="value" id="gamecollision">—</div></div>
   <div class="metric"><div class="label">视线每 tic / 单次峰值</div><div class="value" id="gamelos">—</div></div>
 </div>
+<section id="ray-panel" hidden>
+<h2>Ray · 静止后渐进追踪</h2>
+<div class="grid">
+  <div class="metric"><div class="label">Ray 唯一样本</div><div class="value" id="rayprogress">—</div></div>
+  <div class="metric"><div class="label">Ray 追踪已用时间</div><div class="value" id="rayelapsed">—</div></div>
+  <div class="metric"><div class="label">Ray 追踪 / 预览 / LCD</div><div class="value" id="raytiming">—</div></div>
+  <div class="metric"><div class="label">Ray 最大批次</div><div class="value" id="raybatch">—</div></div>
+</div>
+<div class="events"><span id="raystate">Ray 状态 —</span><span id="rayrays">Ray 射线计数 —</span><span id="raytests">Ray 交点测试 —</span><span id="raystack">Ray 栈 —</span></div>
+<div class="events"><span id="rayphases">Ray 各阶段时间 —</span><span id="rayexit">Ray 退出阶段 —</span></div>
+</section>
 <div class="events"><span id="literender">Lite 绘制 —</span><span id="litequeue">Lite 显示提交 —</span><span id="litemap">Lite 地图 —</span></div>
 <div class="events"><span id="fastgame">混合版状态 —</span></div>
 <div class="events"><span id="gamestate">Game 状态 —</span><span id="gamedrops">Game 跳过的逻辑 tic —</span></div>
@@ -94,6 +105,19 @@ async function refresh() {
     byId('zram').textContent = s.zram_kb ? `${s.zram_kb[0]} / ${s.zram_kb[1]} KB` : '—';
     byId('sram-pre').textContent = s.heap_preallocated_kb ? `${s.heap_preallocated_kb[0]} KB` : '—';
     byId('swap-pre').textContent = s.heap_preallocated_kb ? `${s.heap_preallocated_kb[1]} KB` : '—';
+    const ray = s.ray;
+    byId('ray-panel').hidden = !ray;
+    const rayMs = value => value == null ? '—' : (value / 1000).toFixed(3);
+    byId('rayprogress').textContent = ray ? `${ray.samples} / ${ray.total_samples} · ${ray.progress_percent}%` : '—';
+    byId('rayelapsed').textContent = ray?.elapsed_ms != null ? `${ray.elapsed_ms} ms` : '—';
+    byId('raytiming').textContent = ray ? `${rayMs(ray.trace_us)} / ${rayMs(ray.preview_us)} / ${rayMs(ray.lcd_us)} ms` : '—';
+    byId('raybatch').textContent = ray ? `${rayMs(ray.batch_max_us)} ms · 本批 ${ray.batch_samples ?? '—'}` : '—';
+    byId('raystate').textContent = ray ? `${ray.stage} · generation ${ray.generation ?? '—'} · pass ${ray.pass} · C${ray.contrast ?? '—'} · ${ray.event ?? '—'}` : 'Ray 状态 —';
+    byId('rayrays').textContent = ray ? `射线 primary ${ray.primary ?? '—'} · reflection ${ray.reflection ?? '—'} · shadow ${ray.shadow ?? '—'}` : 'Ray 射线计数 —';
+    byId('raytests').textContent = ray ? `球体测试 ${ray.sphere_tests ?? '—'} · 平面测试 ${ray.plane_tests ?? '—'}` : 'Ray 交点测试 —';
+    byId('raystack').textContent = ray ? `栈剩余 ${ray.stack_words != null && ray.stack_words >= 0 ? ray.stack_words : '—'} words` : 'Ray 栈 —';
+    byId('rayphases').textContent = ray ? [['camera', '相机'], ['intersect', '交点'], ['shadow', '阴影'], ['shade', '着色'], ['reflection', '反射']].map(([key, label]) => `${label} ${rayMs(ray[`${key}_us`])} ms`).join(' · ') : 'Ray 各阶段时间 —';
+    byId('rayexit').textContent = ray ? `退出阶段 ${ray.exit_phases.join(' → ') || '—'}` : 'Ray 退出阶段 —';
     byId('fps').textContent = s.performance?.fps != null ? `${s.performance.fps} fps` : '—';
     byId('frametime').textContent = s.performance ? `${s.performance.total_ms} ms` : '—';
     byId('litefps').textContent = s.lite ? `${s.lite.fps} fps` : '—';
