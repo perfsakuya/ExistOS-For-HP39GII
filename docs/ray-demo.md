@@ -87,6 +87,9 @@ and `lcd_us` records the display submission/barrier separately. The current
 FreeRTOS build does not expose the stack high-water API; `stack_words=-1`
 means unknown. Static `.su` output is single-function evidence, not measured
 task peak. The dashboard accepts Ray and older Game logs.
+Once a generation completes, the dashboard preserves its first completed
+PERF duration; later viewing heartbeats remain in the raw log without extending
+the displayed render duration.
 
 ## Verification
 
@@ -109,6 +112,38 @@ bytes of text, 4,948 bytes of data and 86,240 bytes of BSS; it fits both the
 stages passed, including 13 dashboard tests. Static ARM stack output reports
 464 bytes for the largest individual Ray function, excluding callees and
 library routines. This is not a measurement of the task's peak stack usage.
+
+### Hardware smoke test: 2026-10-04
+
+Firmware `90d08b7` was flashed successfully, with eight matching transfer
+checksum samples and no independent NAND readback. The panel backend `554932d`
+passed 15 dashboard tests. Evidence is saved under
+`hp-39-gii/outputs/ray-demo-2026-10-04/hardware/` beside the repository;
+`ray-hardware-assessment.json` records the completed serial log hash and lines.
+
+One Ray launch was recorded. The first two trace generations were cancelled
+by movement; generation 29 completed all 32,512 primary samples. Its first
+DONE PERF records:
+
+| Observation | Time |
+|---|---:|
+| Trace start to complete frame, including yields and LCD | 6,412 ms |
+| Trace batches, accumulated wall time | 3,471.666 ms |
+| LCD submission and barriers, accumulated | 897.080 ms |
+| Largest trace batch | 35.651 ms |
+
+The quiet wait before tracing is excluded from the 6,412 ms. These timings
+are for one moved view, not a scene-wide performance bound. The batch budget
+is checked periodically and is not a strict 6 ms deadline. Reflection and
+shadow ray counts were 5,216 and 21,769. Both recorded moving-preview PERF
+packets had zero ray and intersection queries; wait packets also stayed at zero.
+
+The user reported normal exit. All four exit stages were recorded, followed
+by six System task lists with no RayDemo task. Allocated heap returned to
+57 KiB, matching the pre-launch observation; the SRAM arena's expanded
+71 KiB capacity remained reserved. No System Panic text was present.
+F1 reset, C1/C3 contrast, repeated launches, precise physical quiet-wait timing,
+visual quality and peak task stack remain unverified on hardware.
 
 ## References
 
