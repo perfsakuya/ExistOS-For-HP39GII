@@ -273,5 +273,37 @@ class DashboardStateTest(unittest.TestCase):
         self.assertEqual(s["exits"], 1)
 
 
+    def test_test_arena_context_weapon_and_resource_fields(self):
+        boot = ("DOOMG_BOOT phase=task_start ms=100 test=1 preset=0\n"
+                "DOOMG_BOOT phase=game_init level=3 test=1 preset=0 state_bytes=7224 "
+                "render_bytes=49857 ui_bytes=17846 test_bytes=1871\n"
+                "DOOMG_BOOT phase=ready ms=120\n")
+        perf = ("DOOMG_PERF frames=2 elapsed_ms=200 logic_ticks=4 "
+                "logic_total_ms=10 logic_max_ms=5 render_total_ms=90 render_max_ms=50 "
+                "lcd_total_ms=40 lcd_max_ms=20 interval_total_ms=200 interval_max_ms=100 "
+                "dropped_ticks=0 hp=100 ammo=50 level=3 test=1 preset=0 weapon=1 "
+                "weapon_ammo=9 shells=9 shotgun_cooldown=34 "
+                "preview_total_us=400 preview_max_us=300 preview_calls=2\n")
+        s = self.read(boot + perf)
+        self.assertEqual(s["stage"], "Test SPRITES 运行中")
+        self.assertEqual(s["game_label"], "Test SPRITES")
+        self.assertEqual(s["game"]["weapon_name"], "SG")
+        self.assertEqual(s["game"]["weapon_ammo"], 9)
+        self.assertEqual(s["game"]["ammo"], 50)  # Original bullet inventory remains distinct.
+        self.assertEqual(s["game"]["shotgun_cooldown"], 34)
+        self.assertEqual(s["game"]["preview_ms"], 0.2)
+        self.assertEqual(s["game"]["preview_max_ms"], 0.3)
+        self.assertEqual(s["game_ui_kb"], round(17846 / 1024, 2))
+        self.assertEqual(s["game_test_kb"], round(1871 / 1024, 2))
+        s = self.read(boot + perf + "DOOMG_BOOT phase=map_load level=3 test=1 preset=2\n")
+        self.assertEqual(s["stage"], "Test ITEMS 启动中")
+        self.assertIsNone(s["game"])
+        s = self.read(boot + perf + "DOOMG_BOOT phase=task_start ms=400 test=0\n")
+        self.assertEqual(s["stage"], "E1M1 Game 启动中")
+        self.assertIsNone(s["game"])
+        self.assertIsNone(s["game_ui_kb"])
+        self.assertIsNone(s["game_test_kb"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -3,7 +3,7 @@ import struct
 import unittest
 from copy import deepcopy
 from unittest.mock import patch
-from build_game_sprites import (SOURCE, generate, GRAY, FAMILIES, KEYS, PICKUPS,
+from build_game_sprites import (SOURCE, OUTPUT, generate, GRAY, FAMILIES, KEYS, PICKUPS, WEAPONS,
                                 build_mappings, rotation_lookup, validate_mappings,
                                 FLIP, INDEX_MASK, PIXEL_BUDGET)
 from build_lite_sprites import read_lumps
@@ -18,7 +18,8 @@ class GameSpriteTests(unittest.TestCase):
         cls.names, cls.mappings = build_mappings(cls.lumps)
 
     def test_bank_budget_and_sequence_coverage(self):
-        self.assertEqual(len(self.assets), 210)
+        self.assertEqual(len(self.assets), 216)
+        self.assertEqual(self.header, OUTPUT.read_text(encoding="ascii"))
         self.assertLessEqual(sum(len(asset[-1]) for _, asset in self.assets), PIXEL_BUDGET)
         names = {name for name, _ in self.assets}
         self.assertEqual(len(names), len(self.assets))
@@ -45,6 +46,17 @@ class GameSpriteTests(unittest.TestCase):
         old_names.extend(name for _, name in KEYS + PICKUPS)
         self.assertEqual(len(old_names), 69)
         self.assertEqual(self.names[:69], old_names)
+
+    def test_weapon_pickups_append_after_all_former_directions(self):
+        with patch('build_game_sprites.WEAPONS', ()):
+            former_names, former_mappings = build_mappings(self.lumps)
+        self.assertEqual(len(former_names), 210)
+        self.assertEqual(self.names[:len(former_names)], former_names)
+        self.assertEqual(self.mappings, former_mappings)
+        self.assertEqual(self.names[len(former_names):], [name for _, name in WEAPONS])
+        self.assertEqual(dict(WEAPONS)[2001], "SHOTA0")
+        for thing_type, name in WEAPONS:
+            self.assertIn(f"{{{thing_type}u, {self.names.index(name)}u}}", self.header)
 
     def test_paired_directions_share_pixels_with_flip(self):
         for family in (1, 2, 3):
@@ -130,7 +142,8 @@ class GameSpriteTests(unittest.TestCase):
             generate(self.data[:-1])
 
     def test_pixel_budget_is_enforced(self):
-        with patch('build_game_sprites.PIXEL_BUDGET', 124784):
+        actual = sum(len(asset[-1]) for _, asset in self.assets)
+        with patch('build_game_sprites.PIXEL_BUDGET', actual - 1):
             with self.assertRaisesRegex(ValueError, "pixel budget"):
                 generate(self.data)
 

@@ -254,6 +254,8 @@ static void check_sparse_ray_reference(void) {
 
 static void check_items_and_spectre(uint8_t *frame, const char *directory) {
     DoomLiteGame game;
+    DoomMap synthetic_map;
+    DoomMapThing synthetic;
     for (unsigned item = 0; item < GAME_STATIC_SPRITE_COUNT; ++item) {
         unsigned thing = 0u;
         for (unsigned map = 0; map < 2u; ++map) {
@@ -264,12 +266,20 @@ static void check_items_and_spectre(uint8_t *frame, const char *directory) {
             if (thing < game.map->thing_count) break;
         }
         if (thing >= game.map->thing_count) {
-            /* These supported survival pickups have no medium single-player
-             * occurrence in these two maps; asset tests validate their source. */
+            /* Optional pickups/weapons may be absent in both release maps.
+             * Render them in a real flat-map geometry to check the same path. */
             assert(game_static_sprites[item].thing_type == 2019u ||
                    game_static_sprites[item].thing_type == 2022u ||
-                   game_static_sprites[item].thing_type == 2025u);
-            continue;
+                   game_static_sprites[item].thing_type == 2025u ||
+                   (game_static_sprites[item].thing_type >= 2001u &&
+                    game_static_sprites[item].thing_type <= 2006u));
+            synthetic = (DoomMapThing){.x=192, .y=0, .type=game_static_sprites[item].thing_type,
+                                       .options=2u, .sector=0u};
+            synthetic_map = *DoomTestMap_Get();
+            synthetic_map.things = &synthetic;
+            synthetic_map.thing_count = 1u;
+            assert(DoomLiteGame_InitData(&game, &synthetic_map));
+            thing = 0u;
         }
         game.actor_count = 0u;
         game.facing = 0u;

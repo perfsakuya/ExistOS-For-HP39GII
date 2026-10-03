@@ -18,6 +18,7 @@ extern "C" {
 #define DL_GAME_RIGHT (1u << 3)
 #define DL_GAME_USE (1u << 4)
 #define DL_GAME_FIRE (1u << 5)
+#define DL_GAME_SWITCH (1u << 6)
 #define DL_EVENT_BLUE_KEY (1u << 0)
 #define DL_EVENT_PICKUP (1u << 1)
 #define DL_EVENT_DOOR_OPEN (1u << 2)
@@ -36,6 +37,10 @@ extern "C" {
 #define DL_EVENT_MOVER (1u << 15)
 #define DL_EVENT_SECRET (1u << 16)
 #define DL_EVENT_LIMIT (1u << 17)
+#define DL_EVENT_WEAPON (1u << 18)
+enum { DL_WEAPON_PISTOL = 0, DL_WEAPON_SHOTGUN = 1 };
+/* Selection indices differ from the existing Doom inventory bit layout. */
+enum { DL_WEAPON_PISTOL_OWNED = 2u, DL_WEAPON_SHOTGUN_OWNED = 4u };
 enum { DL_ACTOR_WALK, DL_ACTOR_ATTACK, DL_ACTOR_PAIN, DL_ACTOR_DEATH, DL_ACTOR_CORPSE };
 enum { DL_ACTOR_AWAKE = 1u, DL_ACTOR_SOLID = 2u };
 enum { DL_MOVER_NONE, DL_MOVER_DOOR, DL_MOVER_FLOOR, DL_MOVER_PLATFORM };
@@ -77,7 +82,10 @@ typedef struct {
     uint16_t actor_count, ai_cursor, pickup_count, teleport_count;
     uint16_t player_sector, suit_tics, invulnerable_tics;
     uint8_t facing, blue_key, red_key, yellow_key, completed;
-    uint8_t map_index, contrast, armor_class, pistol_tics, weapons, backpack;
+    uint8_t map_index, contrast, armor_class, weapons, backpack, current_weapon;
+    uint8_t pistol_tics; /* Current weapon animation clock; historical name keeps logs compatible. */
+    uint8_t shotgun_cooldown; /* Survives weapon switches; firing the pistol cannot shorten it. */
+    uint8_t freeze_actors; /* Static Test previews skip actor animation and AI. */
     uint8_t previous_buttons, teleport_cooldown;
     int8_t turn_remainder;
     uint8_t thing_actor[DOOM_LITE_GAME_THINGS]; /* 255 is not an actor. */
@@ -93,7 +101,11 @@ typedef struct {
 } DoomLiteGame;
 void DoomLiteGame_Init(DoomLiteGame *game);
 int DoomLiteGame_InitMap(DoomLiteGame *game, unsigned map_index);
+/* Map and its referenced arrays stay immutable and alive for the game lifetime.
+ * Invalid capacities or references are rejected before changing game state. */
+int DoomLiteGame_InitData(DoomLiteGame *game, const DoomMap *map);
 int DoomLiteGame_NextMap(DoomLiteGame *game);
+uint16_t DoomLiteGame_CurrentAmmo(const DoomLiteGame *game);
 uint32_t DoomLiteGame_Step(DoomLiteGame *game, uint16_t buttons);
 int DoomLiteGame_IsSolid(const DoomLiteGame *game, int32_t x_q8, int32_t y_q8);
 int DoomLiteGame_ThingActive(const DoomLiteGame *game, unsigned thing_index);

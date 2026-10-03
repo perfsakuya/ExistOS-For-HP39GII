@@ -12,6 +12,9 @@
 void DoomLite_DrawGameHud(uint8_t *pixels, const DoomLiteGame *game,
                           const char *message, unsigned map_zoom);
 
-/* Flash-backed, pre-sized pistol and muzzle flash, clipped to the 3D view.
+/* Flash-backed, pre-sized pistol/shotgun and flash/pump poses, clipped to the view.
  * No game state changes or dynamic allocation. Do not call for the map. */
 void DoomLite_DrawGameWeapon(uint8_t *pixels, const DoomLiteGame *game);
+/* Asset pixels, patch descriptors, palette/pointer tables and compact text
+ * glyphs. Uses target sizeof; excludes code and linker placement padding. */
+unsigned DoomLite_UiReadonlyBytes(void);

@@ -238,12 +238,64 @@ int DoomLiteGame_GetVisual(const DoomLiteGame *g,unsigned i,DoomLiteVisual *v) {
     const DoomLiteActor *a=&g->actors[i];
     *v=(DoomLiteVisual){a->x_q8,a->y_q8,g->map->things[a->thing_index].type,a->sector,a->state,a->frame,a->facing};return 1;
 }
-int DoomLiteGame_InitMap(DoomLiteGame *g,unsigned index) {
-    if(!g) return 0;
-    const DoomMap *m=DoomMap_Get(index);
-    if(!m||m->thing_count>DOOM_MAP_MAX_THINGS||m->sector_count>DOOM_MAP_MAX_SECTORS||m->line_count>DOOM_MAP_MAX_LINES) return 0;
+static int valid_map(const DoomMap *m) {
+    if(!m||m->index>UINT8_MAX||m->thing_count>DOOM_MAP_MAX_THINGS||
+       !m->sector_count||m->sector_count>DOOM_MAP_MAX_SECTORS||
+       m->line_count>DOOM_MAP_MAX_LINES||!m->grid_width||!m->grid_height||
+       !m->subsector_count||m->node_count>0x8000u||m->subsector_count>0x8000u||
+       m->start_sector>=m->sector_count||m->special_line_count>m->line_count||
+       m->tag_count>m->sector_count||!m->sectors||!m->subsector_sector||!m->row_first||
+       (m->thing_count&&!m->things)||(m->line_count&&!m->lines)||
+       (m->node_count&&!m->nodes)||(m->cell_count&&!m->cells)||
+       (m->cell_ref_count&&!m->cell_refs)||(m->special_line_count&&!m->special_line_refs)||
+       (m->tag_count&&(!m->tags||!m->tag_sector_refs))||
+       (m->neighbor_ref_count&&!m->neighbor_refs)) return 0;
+    if(m->row_first[0]||m->row_first[m->grid_height]!=m->cell_count) return 0;
+    for(unsigned y=0;y<m->grid_height;++y) {
+        unsigned first=m->row_first[y],end=m->row_first[y+1u];
+        if(first>end||end>m->cell_count) return 0;
+        for(unsigned i=first;i<end;++i) {
+            const DoomMapCell *cell=&m->cells[i];
+            if(cell->x>=m->grid_width||(i>first&&cell->x<=m->cells[i-1u].x)||
+               (unsigned)cell->first_ref+cell->count>m->cell_ref_count) return 0;
+        }
+    }
+    for(unsigned i=0;i<m->cell_ref_count;++i) if(m->cell_refs[i]>=m->line_count) return 0;
+    for(unsigned i=0;i<m->special_line_count;++i) if(m->special_line_refs[i]>=m->line_count) return 0;
+    for(unsigned i=0;i<m->subsector_count;++i) if(m->subsector_sector[i]>=m->sector_count) return 0;
+    for(unsigned i=0;i<m->node_count;++i) for(unsigned j=0;j<2u;++j) {
+        unsigned child=m->nodes[i].child[j];
+        if(child&0x8000u) {if((child&0x7fffu)>=m->subsector_count) return 0;}
+        else if(child>=m->node_count) return 0;
+    }
+    for(unsigned i=0;i<m->line_count;++i) {
+        const DoomMapLine *line=&m->lines[i];
+        if((line->front_sector>=m->sector_count&&line->front_sector!=DOOM_MAP_NO_SECTOR)||
+           (line->back_sector>=m->sector_count&&line->back_sector!=DOOM_MAP_NO_SECTOR)) return 0;
+    }
+    for(unsigned i=0;i<m->neighbor_ref_count;++i) if(m->neighbor_refs[i]>=m->sector_count) return 0;
+    for(unsigned i=0;i<m->sector_count;++i)
+        if((unsigned)m->sectors[i].first_neighbor+m->sectors[i].neighbor_count>m->neighbor_ref_count) return 0;
+    for(unsigned i=0;i<m->tag_count;++i) {
+        const DoomMapTag *tag=&m->tags[i];
+        if((i&&tag->tag<=m->tags[i-1u].tag)||
+           (unsigned)tag->first_ref+tag->count>m->sector_count) return 0;
+        for(unsigned j=0;j<tag->count;++j) if(m->tag_sector_refs[tag->first_ref+j]>=m->sector_count) return 0;
+    }
+    unsigned actors=0,teleports=0;
+    for(unsigned i=0;i<m->thing_count;++i) {
+        const DoomMapThing *thing=&m->things[i];
+        if(thing->sector>=m->sector_count&&thing->sector!=DOOM_MAP_NO_SECTOR) return 0;
+        if(thing->type==14u&&++teleports>16u) return 0;
+        if(medium(thing)&&hp_for_type(thing->type)&&++actors>DOOM_LITE_GAME_ACTORS) return 0;
+    }
+    return DoomMap_SectorAt(m,m->start_x,m->start_y)==m->start_sector;
+}
+int DoomLiteGame_InitData(DoomLiteGame *g,const DoomMap *m) {
+    if(!g||!valid_map(m)) return 0;
     memset(g,0,sizeof(*g)); memset(g->thing_actor,NO_ACTOR,sizeof(g->thing_actor));
-    g->map=m;g->map_index=(uint8_t)index;g->contrast=1;g->health=100;g->ammo=50;g->weapons=3;
+    g->map=m;g->map_index=(uint8_t)m->index;g->contrast=1;g->health=100;g->ammo=50;g->weapons=3;
+    g->current_weapon=DL_WEAPON_PISTOL;
     g->x_q8=(int32_t)m->start_x*256;g->y_q8=(int32_t)m->start_y*256;
     g->facing=(uint8_t)(m->start_angle*256u/360u);g->player_sector=m->start_sector;
     for(unsigned s=0;s<m->sector_count;++s) g->sector_state[s]=(DoomLiteSectorState){m->sectors[s].floor,m->sectors[s].ceiling,m->sectors[s].special};
@@ -261,16 +313,34 @@ int DoomLiteGame_InitMap(DoomLiteGame *g,unsigned index) {
     }
     g->metrics.actor_high_water=g->actor_count;return g->metrics.pool_overflows==0;
 }
+int DoomLiteGame_InitMap(DoomLiteGame *g,unsigned index) {
+    return index<DOOM_MAP_COUNT?DoomLiteGame_InitData(g,DoomMap_Get(index)):0;
+}
 void DoomLiteGame_Init(DoomLiteGame *g) { (void)DoomLiteGame_InitMap(g,0u); }
 int DoomLiteGame_NextMap(DoomLiteGame *g) {
     if(!g||!g->map) return 0;
     unsigned next=g->map_index+1u;uint16_t hp=g->health,ammo=g->ammo,armor=g->armor;
     uint16_t shells=g->shells,rockets=g->rockets,cells=g->cells;
-    uint8_t armor_class=g->armor_class,contrast=g->contrast,weapons=g->weapons,backpack=g->backpack;
+    uint8_t armor_class=g->armor_class,contrast=g->contrast,weapons=g->weapons,backpack=g->backpack,current_weapon=g->current_weapon;
     if(next>=DOOM_MAP_COUNT) return DoomLiteGame_InitMap(g,0);
     if(!DoomLiteGame_InitMap(g,next)) return 0;
     g->health=hp?hp:100;g->ammo=ammo;g->armor=armor;g->armor_class=armor_class;g->contrast=contrast;
-    g->shells=shells;g->rockets=rockets;g->cells=cells;g->weapons=weapons;g->backpack=backpack;return 1;
+    g->shells=shells;g->rockets=rockets;g->cells=cells;g->weapons=weapons;g->backpack=backpack;
+    g->current_weapon=current_weapon;return 1;
+}
+static int weapon_owned(const DoomLiteGame *g,unsigned weapon) {
+    return weapon==DL_WEAPON_PISTOL?(g->weapons&DL_WEAPON_PISTOL_OWNED)!=0:
+           weapon==DL_WEAPON_SHOTGUN?(g->weapons&DL_WEAPON_SHOTGUN_OWNED)!=0:0;
+}
+uint16_t DoomLiteGame_CurrentAmmo(const DoomLiteGame *g) {
+    if(!g||!weapon_owned(g,g->current_weapon)) return 0;
+    return g->current_weapon==DL_WEAPON_SHOTGUN?g->shells:g->ammo;
+}
+static uint32_t switch_weapon(DoomLiteGame *g) {
+    if(g->pistol_tics) return 0;
+    unsigned next=g->current_weapon==DL_WEAPON_PISTOL?DL_WEAPON_SHOTGUN:DL_WEAPON_PISTOL;
+    if(!weapon_owned(g,next)) return 0;
+    g->current_weapon=(uint8_t)next;return DL_EVENT_WEAPON;
 }
 static DoomLiteMover *mover_for(DoomLiteGame *g,uint16_t sector) {
     for(unsigned i=0;i<DOOM_LITE_GAME_MOVERS;++i) if(g->movers[i].kind&&g->movers[i].sector==sector) return &g->movers[i];
@@ -657,8 +727,18 @@ static uint32_t ai_step(DoomLiteGame *g) {
     }
     prof(g,DL_PROFILE_AI,started);return events;
 }
-static uint32_t shoot(DoomLiteGame *g) {
-    if(!g->ammo) return DL_EVENT_SHOT_MISS;
+static uint32_t damage_actor(DoomLiteGame *g,unsigned index,unsigned damage) {
+    DoomLiteActor *a=&g->actors[index];
+    if(!(a->flags&DL_ACTOR_AWAKE)) {a->flags|=DL_ACTOR_AWAKE;++g->metrics.awake_actors;}
+    a->health=(int16_t)(a->health>(int)damage?a->health-(int)damage:0);
+    if(!a->health) {
+        a->flags&=(uint8_t)~DL_ACTOR_SOLID;if(g->metrics.awake_actors) --g->metrics.awake_actors;
+        actor_state(g,a,DL_ACTOR_DEATH);++g->kills;
+        return DL_EVENT_SHOT_HIT|DL_EVENT_KILL;
+    }
+    actor_state(g,a,DL_ACTOR_PAIN);a->cooldown=12u;return DL_EVENT_SHOT_HIT;
+}
+static uint32_t shoot_pistol(DoomLiteGame *g) {
     --g->ammo;g->pistol_tics=15u;++g->metrics.shots;
     int32_t px=fdiv(g->x_q8,256),py=fdiv(g->y_q8,256);
     int32_t fx=sine_q14((uint8_t)(g->facing+64u)),fy=sine_q14(g->facing);
@@ -673,15 +753,41 @@ static uint32_t shoot(DoomLiteGame *g) {
         best=(int)i;best_forward=forward;
     }
     if(best<0) return DL_EVENT_SHOT_MISS;
-    DoomLiteActor *a=&g->actors[best];
-    if(!(a->flags&DL_ACTOR_AWAKE)) {a->flags|=DL_ACTOR_AWAKE;++g->metrics.awake_actors;}
-    a->health=(int16_t)(a->health>25?a->health-25:0);
-    if(!a->health) {
-        a->flags&=(uint8_t)~DL_ACTOR_SOLID;if(g->metrics.awake_actors) --g->metrics.awake_actors;
-        actor_state(g,a,DL_ACTOR_DEATH);++g->kills;
-        return DL_EVENT_SHOT_HIT|DL_EVENT_KILL;
+    return damage_actor(g,(unsigned)best,25u);
+}
+static int pellet_target(DoomLiteGame *g,uint8_t angle) {
+    int32_t px=fdiv(g->x_q8,256),py=fdiv(g->y_q8,256);
+    int32_t fx=sine_q14((uint8_t)(angle+64u)),fy=sine_q14(angle);
+    int best=-1;int64_t best_forward=(int64_t)640*16384+1;
+    for(unsigned i=0;i<g->actor_count;++i) {
+        const DoomLiteActor *a=&g->actors[i];if(a->health<=0) continue;
+        int32_t dx=fdiv(a->x_q8,256)-px,dy=fdiv(a->y_q8,256)-py;
+        int64_t forward=(int64_t)dx*fx+(int64_t)dy*fy;
+        int64_t side=(int64_t)dx*fy-(int64_t)dy*fx;
+        if(forward<=0||forward>=best_forward||side<-(int64_t)12*16384||side>(int64_t)12*16384) continue;
+        /* Trace the pellet heading, ending at the closest point to the actor.
+         * The pistol retains its original wider aiming tolerance above. */
+        int32_t tx=px+(int32_t)((int64_t)fx*forward/(16384u*16384u));
+        int32_t ty=py+(int32_t)((int64_t)fy*forward/(16384u*16384u));
+        if(!sight(g,px,py,tx,ty,DoomLiteGame_FloorHeight(g,g->player_sector)+32)) continue;
+        best=(int)i;best_forward=forward;
     }
-    actor_state(g,a,DL_ACTOR_PAIN);a->cooldown=12u;return DL_EVENT_SHOT_HIT;
+    return best;
+}
+static uint32_t shoot(DoomLiteGame *g) {
+    if(!weapon_owned(g,g->current_weapon)) return DL_EVENT_SHOT_MISS;
+    if(g->current_weapon==DL_WEAPON_PISTOL) return g->ammo?shoot_pistol(g):DL_EVENT_SHOT_MISS;
+    if(g->shotgun_cooldown) return 0;
+    if(!g->shells) return DL_EVENT_SHOT_MISS;
+    --g->shells;g->pistol_tics=35u;g->shotgun_cooldown=35u;++g->metrics.shots;
+    uint32_t events=0;
+    /* Seven deterministic headings, each separated by 1/256 turn (1.4 deg),
+     * deal 10 damage apiece. No random state or per-frame ray budget is needed. */
+    for(int offset=-3;offset<=3;++offset) {
+        int target=pellet_target(g,(uint8_t)(g->facing+offset));
+        if(target>=0) events|=damage_actor(g,(unsigned)target,10u);
+    }
+    return events?events:DL_EVENT_SHOT_MISS;
 }
 static uint32_t sector_effects(DoomLiteGame *g) {
     if(g->player_sector>=g->map->sector_count) return 0;
@@ -698,12 +804,13 @@ static uint32_t sector_effects(DoomLiteGame *g) {
 uint32_t DoomLiteGame_Step(DoomLiteGame *g,uint16_t buttons) {
     if(!g||!g->map) return 0;
     ++g->ticks;if(g->pistol_tics) --g->pistol_tics;
+    if(g->shotgun_cooldown) --g->shotgun_cooldown;
     if(g->suit_tics) --g->suit_tics;
     if(g->invulnerable_tics) --g->invulnerable_tics;
     if(g->teleport_cooldown) --g->teleport_cooldown;
     uint16_t pressed=buttons&~g->previous_buttons;g->previous_buttons=(uint8_t)buttons;
     if(g->completed||!g->health) return 0;
-    step_movers(g);animate_actors(g);
+    step_movers(g);if(!g->freeze_actors) animate_actors(g);
     if(!!(buttons&DL_GAME_LEFT)!=!!(buttons&DL_GAME_RIGHT)) {
         int half=g->turn_remainder+((buttons&DL_GAME_LEFT)?-3:3),whole=half/2;
         g->facing=(uint8_t)(g->facing+whole);g->turn_remainder=(int8_t)(half-whole*2);
@@ -722,7 +829,8 @@ uint32_t DoomLiteGame_Step(DoomLiteGame *g,uint16_t buttons) {
     }
     if((buttons&(DL_GAME_UP|DL_GAME_DOWN))||(g->ticks&3u)==1u) events|=pickup(g);
     if(pressed&DL_GAME_USE) events|=use_nearest(g);
+    if(pressed&DL_GAME_SWITCH) events|=switch_weapon(g);
     if(pressed&DL_GAME_FIRE) events|=shoot(g);
-    if(!g->completed) {events|=ai_step(g);events|=sector_effects(g);}
+    if(!g->completed) {if(!g->freeze_actors) events|=ai_step(g);events|=sector_effects(g);}
     return events;
 }

@@ -3,6 +3,8 @@
 #include "GameSprites.h"
 #include "DoomMap.h"
 #include "GameWorldTextures.h"
+#include "DoomTestMap.h"
+#include "DoomTestWorld.h"
 
 #ifndef GAME_RAY_SPANS
 #define GAME_RAY_SPANS 32u /* Walls plus foreground floor/ceiling depth strips. */
@@ -50,7 +52,8 @@ unsigned DoomLite_WorldReadonlyBytes(void) {
         sizeof(game_world_textures) + sizeof(game_world_flats) + sizeof(game_world_maps) +
         sizeof(game_world_e1m1_sides) + sizeof(game_world_e1m2_sides) +
         sizeof(game_world_e1m1_lines) + sizeof(game_world_e1m2_lines) +
-        sizeof(game_world_e1m1_sectors) + sizeof(game_world_e1m2_sectors));
+        sizeof(game_world_e1m1_sectors) + sizeof(game_world_e1m2_sectors) +
+        DOOM_TEST_WORLD_BYTES);
 }
 unsigned DoomLite_RenderWorkingSetBytes(void) {
     return (unsigned)(sizeof(game_spans) + sizeof(game_span_first) + sizeof(game_span_count) +
@@ -147,10 +150,19 @@ static unsigned game_texture_height(unsigned texture) {
         ? game_world_textures[texture].world_height : 128u;
 }
 
+static const GameWorldMap *game_world_map(const DoomMap *map) {
+    if (!map) return NULL;
+    if (map->index >= DOOM_MAP_COUNT)
+        return map == DoomTestMap_Get() ? &doom_test_world : NULL;
+    const GameWorldMap *world = &game_world_maps[map->index];
+    return map->line_count <= world->line_count && map->sector_count <= world->sector_count
+        ? world : NULL;
+}
+
 static const GameWorldSide *game_world_side(const DoomMap *map, unsigned line,
                                            unsigned front) {
-    const GameWorldMap *world = &game_world_maps[map->index];
-    if (line >= world->line_count) return NULL;
+    const GameWorldMap *world = game_world_map(map);
+    if (!world || line >= world->line_count) return NULL;
     const GameWorldLine *edge = &world->lines[line];
     const unsigned side = front ? edge->front_side : edge->back_side;
     return side < world->side_count ? &world->sides[side] : NULL;
@@ -158,8 +170,11 @@ static const GameWorldSide *game_world_side(const DoomMap *map, unsigned line,
 
 static int game_world_u(const DoomMap *map, unsigned index, unsigned front,
                         int hit_x, int hit_y, const GameWorldSide *side) {
+    const GameWorldMap *world = game_world_map(map);
+    if (!world || !side || index >= map->line_count || index >= world->line_count)
+        return side ? side->x_offset : 0;
     const DoomMapLine *line = &map->lines[index];
-    const GameWorldLine *edge = &game_world_maps[map->index].lines[index];
+    const GameWorldLine *edge = &world->lines[index];
     const int dx = front ? hit_x - line->x1 : line->x2 - hit_x;
     const int dy = front ? hit_y - line->y1 : line->y2 - hit_y;
     return side->x_offset + (dx * edge->tangent_x + dy * edge->tangent_y) / 16384;
@@ -180,8 +195,10 @@ static void game_plane_row_detail(uint8_t *row, unsigned y,
     const unsigned horizon = DOOM_GAME_VIEW_H / 2u;
     const uint8_t background = y < horizon
         ? (uint8_t)(237u - y / 7u) : (uint8_t)(205u + y / 10u);
-    const GameWorldSector *surface = &game_world_maps[game->map->index].sectors[sector];
-    const unsigned texture = y < horizon ? surface->ceiling : surface->floor;
+    const GameWorldMap *world = game_world_map(game->map);
+    const GameWorldSector *surface = world && sector < world->sector_count
+        ? &world->sectors[sector] : NULL;
+    const unsigned texture = !surface ? 0u : y < horizon ? surface->ceiling : surface->floor;
     if (texture == 0u || texture == 255u || texture > GAME_WORLD_FLAT_COUNT || y == horizon) {
         memset(row, game_gray(background, game->contrast), LITE_W);
         return;
@@ -441,8 +458,10 @@ static void game_cast_spans(const DoomLiteGame *game, unsigned ray,
              * a low actor paint through the foreground platform floor. */
             const int current_top = game_project_y(current_ceiling, eye, safe_depth);
             const int current_bottom = game_project_y(current_floor, eye, safe_depth);
-            const GameWorldSector *material = &game_world_maps[map->index].sectors[sector];
-            if (material->ceiling != GAME_WORLD_SKY)
+            const GameWorldMap *world = game_world_map(map);
+            const GameWorldSector *material = world && sector < world->sector_count
+                ? &world->sectors[sector] : NULL;
+            if (!material || material->ceiling != GAME_WORLD_SKY)
                 game_add_span(ray, clip_top, current_top, safe_depth,
                                GAME_WALL_PLANE, 0u, clip_top, clip_bottom);
             game_add_span(ray, current_bottom, clip_bottom, safe_depth,

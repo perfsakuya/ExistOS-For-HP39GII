@@ -31,6 +31,8 @@ PICKUPS = ((2007, "CLIPA0"), (2048, "AMMOA0"),
            (2014, "BON1A0"), (2015, "BON2A0"), (2018, "ARM1A0"),
            (2013, "SOULA0"), (2019, "ARM2A0"), (8, "BPAKA0"),
            (2022, "PINVA0"), (2023, "PSTRA0"), (2025, "SUITA0"))
+WEAPONS = ((2001, "SHOTA0"), (2002, "MGUNA0"), (2003, "LAUNA0"),
+           (2004, "PLASA0"), (2005, "CSAWA0"), (2006, "BFUGA0"))
 # Black edges and midtone detail remain distinct from the light masonry.
 GRAY = (0, 12, 28, 44, 60, 78, 96, 114, 132, 150, 168, 185, 200, 214, 229, 244)
 ROTATIONS = 8
@@ -100,6 +102,12 @@ def build_mappings(lumps: dict[str, bytes]) -> tuple[list[str], list[tuple]]:
             require(len(frames) <= MAX_FRAMES, "too many animation frames")
             rows.append(frames)
         mappings.append((thing_type, rows))
+    # Append weapons after every former actor direction, preserving the
+    # existing bank indices and the high-bit horizontal-flip contract.
+    for _, name in WEAPONS:
+        require(name in lumps, f"missing weapon pickup patch {name}")
+        require(name not in names, f"duplicate weapon pickup patch {name}")
+        names.append(name)
     require(len(names) <= INDEX_MASK + 1, "sprite bank exceeds reference capacity")
     validate_mappings(mappings, len(names))
     return names, mappings
@@ -183,9 +191,9 @@ def generate(data: bytes) -> tuple[str, list[tuple[str, tuple]]]:
                   "static const uint16_t game_key_sprites[3] = {" +
                   ", ".join(f"{names.index(name)}u" for _, name in KEYS) + "};", ""))
     lines.extend(("typedef struct { uint16_t thing_type, sprite; } GameStaticSprite;",
-                  f"#define GAME_STATIC_SPRITE_COUNT {len(KEYS + PICKUPS)}u",
+                  f"#define GAME_STATIC_SPRITE_COUNT {len(KEYS + PICKUPS + WEAPONS)}u",
                   "static const GameStaticSprite game_static_sprites[GAME_STATIC_SPRITE_COUNT] = {"))
-    for thing_type, name in sorted(KEYS + PICKUPS):
+    for thing_type, name in sorted(KEYS + PICKUPS + WEAPONS):
         lines.append(f"    {{{thing_type}u, {names.index(name)}u}},")
     lines.extend(("};", ""))
     return "\n".join(lines), assets
@@ -237,6 +245,16 @@ def write_previews(directory: Path, data: bytes, assets: list[tuple]) -> None:
                 for state, frames in enumerate(states)
                 for frame, references in enumerate(frames)]
         sheet(directory / f"animations-{prefix}.png", rows)
+    pickup_sheet = Image.new("L", (3 * 150, 2 * 96), 237)
+    draw = ImageDraw.Draw(pickup_sheet)
+    for index, (thing_type, name) in enumerate(WEAPONS):
+        x, y = (index % 3) * 150, (index // 3) * 96
+        sprite = images[name]
+        sprite = sprite.resize((sprite.width * 4, sprite.height * 4),
+                               Image.Resampling.NEAREST)
+        pickup_sheet.paste(sprite, (x + (150 - sprite.width) // 2, y + 18))
+        draw.text((x + 5, y + 3), f"{thing_type} {name}", fill=16)
+    pickup_sheet.save(directory / "weapon-pickups.png")
 
 
 def main() -> None:

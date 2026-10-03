@@ -115,12 +115,22 @@ def state():
     game_perf = latest_fields(GAME_PERF_RE, game_run)
     game_detail = latest_fields(GAME_DETAIL_RE, game_run)
     game_boot = GAME_BOOT_RE.findall(game_run)
+    game_context = {}
+    for line in game_boot:
+        game_context.update(fields(line))
     map_load = game_run.rfind("DOOMG_BOOT phase=map_load")
     perf_position = game_run.rfind("DOOMG_PERF")
     if map_load > perf_position:
         game_perf = game_detail = None
     elif game_run.rfind("DOOMG_DETAIL") < perf_position:
         game_detail = None  # A new PERF packet must not inherit the old DETAIL packet.
+    if game_perf:
+        game_context.update(game_perf)
+    test_mode = bool(game_context.get("test", 0))
+    preset = game_context.get("preset", 0)
+    preset_names = ("SPRITES", "COMBAT", "ITEMS")
+    preset_name = preset_names[preset] if 0 <= preset < len(preset_names) else "UNKNOWN"
+    game_label = f"Test {preset_name}" if test_mode else f"E1M{game_context.get('level', 1)} Game"
     game_exits = GAME_EXIT_RE.findall(game_run)
     latest_system_mem = mem[-1][0] if mem else -1
     latest_game_mem = next((sample for sample in reversed(game_mem)
@@ -173,9 +183,7 @@ def state():
     latest_task_list = raw[last_status:] if last_status >= 0 else ""
     doom_task_visible = bool(re.search(r"(?m)^Doom\s+[XRBSD]\s+", latest_task_list))
     if mode == "game":
-        boot_fields = fields(game_boot[-1]) if game_boot else {}
-        level = (game_perf or boot_fields).get("level", 1)
-        prefix = f"E1M{level} Game"
+        prefix = game_label
         if any("phase=ui_resume_done" in line for line in game_exits):
             stage = prefix + " 已退出"
         elif game_exits:
@@ -308,6 +316,18 @@ def state():
             "map": bool(game_perf["map"]) if "map" in game_perf else None,
             "zoom": game_perf.get("zoom"),
             "pistol_tics": game_perf.get("pistol_tics"),
+            "weapon": game_perf.get("weapon", 0),
+            "weapon_name": "SG" if game_perf.get("weapon", 0) == 1 else "PIS",
+            "weapon_ammo": game_perf.get("weapon_ammo", game_perf.get("ammo")),
+            "shells": game_perf.get("shells"),
+            "shotgun_cooldown": game_perf.get("shotgun_cooldown"),
+            "test": test_mode,
+            "preset": preset if test_mode else None,
+            "preset_name": preset_name if test_mode else None,
+            "preview_ms": round(game_perf["preview_total_us"] / (game_perf["preview_calls"] * 1000), 3)
+                if game_perf.get("preview_calls") else None,
+            "preview_max_ms": round(game_perf["preview_max_us"] / 1000, 3)
+                if "preview_max_us" in game_perf else None,
             "level": game_perf.get("level", 1),
             "armor": game_perf.get("armor"),
             "red_key": bool(game_perf["red"]) if "red" in game_perf else None,
@@ -326,6 +346,7 @@ def state():
                               "dropped_ticks"))
              and game_perf["frames"] > 0 and game_perf["elapsed_ms"] > 0 else None,
         "game_boot": game_boot[-1] if game_boot else None,
+        "game_label": game_label if mode == "game" else None,
         "game_resources": next(({
             "state_kb": round(fields(line)["state_bytes"] / 1024, 2),
             "render_kb": round(fields(line)["render_bytes"] / 1024, 2),
@@ -334,6 +355,10 @@ def state():
                                for line in reversed(game_boot) if "world_bytes=" in line), None),
         "game_sprite_kb": next((round(fields(line)["sprite_bytes"] / 1024, 2)
                                 for line in reversed(game_boot) if "sprite_bytes=" in line), None),
+        "game_ui_kb": next((round(fields(line)["ui_bytes"] / 1024, 2)
+                            for line in reversed(game_boot) if "ui_bytes=" in line), None),
+        "game_test_kb": next((round(fields(line)["test_bytes"] / 1024, 2)
+                              for line in reversed(game_boot) if "test_bytes=" in line), None),
         "game_detail": {
             "span_active_kb": round(game_detail["span_total_bytes"] /
                                     (game_detail["frames"] * 1024), 2)

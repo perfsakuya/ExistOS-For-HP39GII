@@ -5,7 +5,7 @@
 `Game` uses standard Freedoom 0.13.0 E1M1/E1M2, without embedding a complete
 IWAD or linking the legacy GBADoom engine. `build_game_maps.py` emits
 immutable geometry/BSP/sparse collision/tag/neighbor tables;
-`build_game_sprites.py` emits 210 packed grayscale patches (124,785 pixel bytes)
+`build_game_sprites.py` emits 216 packed grayscale patches (125,921 pixel bytes)
 for eight-direction actor animation and pickups. `build_game_world.py` composes the original PNAMES/TEXTURE1/2
 patches and flats into 198 wall and 87 plane materials. It preserves sidedef
 offsets, both line sides, original texture dimensions and sector assignments.
@@ -20,7 +20,7 @@ the original left anchor. Actor facing is initialized from the map and updated
 by movement/aiming; fixed-point relative view direction selects the frame.
 `check_game_directions.c` checks direction boundaries, animation references,
 mirrored raster/anchors, AI facing and bounded drawing. `DoomLite_SpriteReadonlyBytes`
-reports the ARM object payload (129,221 bytes, excluding linker alignment),
+reports the ARM object payload (130,453 bytes, excluding linker alignment),
 and `DOOMG_BOOT sprite_bytes` exposes it in the dashboard without a decoded heap.
 
 ```powershell
@@ -83,12 +83,32 @@ The checked-in converted WAD is 7,025,444 bytes, SHA-256
 Retain Freedoom's `COPYING.txt` and `CREDITS.txt` with any redistributed
 output. The intermediate C array is large and should not be checked in.
 
+## Flat Test app and weapons
+
+The default app list is `KhiCAS / Notes / Game / Test`. `build_test_arena.py`
+generates a separate flat enclosed room and material references, sharing the
+Game pixel banks. F2 cycles SPRITES (controlled animation, both weapons),
+COMBAT (real AI and combat), and ITEMS (pickups without enemies). Death retries
+the current preset. F4 switches owned pistol/shotgun in the scene, or zooms the
+map. Normal Game still loads E1M1/E1M2 only.
+
+The simplified shotgun uses seven fixed rays, ten damage each, one shell and
+35-tic animation/cooldown. Switching preserves cooldown. `check_game_weapons.c`
+checks inventory, switching, damage, wall occlusion and map transitions;
+`check_test_arena.c` checks room bounds, BSP, wall collision and presets;
+`check_test_visuals.c` covers world routing, contrasts and bounded composition.
+All run through `run_game_checks.py`. The dashboard logs current weapon/ammo,
+shells, Test preset and preview timings. Preview time is nested within logic.
+UI and Test readonly payloads are reported separately from dynamic RAM.
+
 ## Previous compact E1M1 tables and retained Lite baseline
 
-The default firmware builds `Lite` and the simplified `Game` application.
+The default firmware builds simplified `Game` and `Test` applications.
 It does not embed the full converted WAD or link the GBADoom engine; use
 `SKYOS_BUILD_LEGACY_DOOM=ON` only to reproduce the old E1M1/Flat/Hybrid
-experiments. The retained original Lite map, gameplay and portal headers are generated from
+experiments. Lite's app/task are removed; its grid renderer is compiled only
+for the host comparison or legacy build. The retained original Lite map,
+gameplay and portal headers are generated from
 the checked-in converted WAD. After changing it, regenerate with
 `build_lite_grid.py`, `build_lite_game_data.py`, and `build_lite_portals.py`.
 Before packaging a test image, run the last two scripts with `--check` and
@@ -104,11 +124,14 @@ retain the Freedoom `COPYING.txt` and `CREDITS.txt` attribution; only 4,840
 packed grayscale bytes are linked instead of the full WAD.
 
 `build_lite_ui.py` also reads that WAD to generate `E1M1Ui.h`: a pre-sized
-status bar, digits, faces, key icon, three pistol frames, and muzzle flash.
+status bar, digits, faces, key icon, pistol frames/flash and six shotgun
+shooting, pump and flash patches.
 The bar lettering is rebuilt from Freedoom's small menu font with stronger
 LCD contrast. Run it with `--check`, `test_lite_ui.py`, and the portable
-`check_lite_ui.c` composition/animation check. UI data occupies 8,622 flash
-bytes without allocating a decoded framebuffer or image cache.
+`check_lite_ui.c` composition/animation check. UI pixels occupy 17,062 flash
+bytes; `DoomLite_UiReadonlyBytes` reports 17,846 bytes on ARM including
+descriptors, palettes, glyphs and indices. No decoded framebuffer or image
+cache is allocated.
 
 ## Live serial debugging
 

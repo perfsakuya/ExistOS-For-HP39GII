@@ -1,23 +1,22 @@
-/* Fast, intentionally simplified E1M1 walk-through for the 39gII LCD.
- * Geometry comes from the freely licensed Freedoom E1M1 map. The original
- * Lite entry point keeps its fixed grid view; the game entry point adds
- * dynamic WAD door boundaries and compact Freedoom sprites. */
+/* Native grayscale Game renderer. The removed Lite application's grid
+ * renderer remains available only to host reference checks and legacy ports. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-#ifndef DOOM_LITE_RAY_TEST
-#include "FreeRTOS.h"
-#include "task.h"
-#include "SystemUI.h"
-#include "keyboard_gii39.h"
-#include "sys_llapi.h"
-#endif
+#if defined(DOOM_LITE_RAY_TEST) || defined(SKYOS_BUILD_LEGACY_DOOM)
 #include "E1M1Grid.h"
 #include "E1M1Portals.h"
+#endif
 #include "DoomLiteRender.h"
 #include "DoomLiteHud.h"
 
+#ifndef LCD_PIX_W
+#define LCD_PIX_W DOOM_GAME_LCD_W
+#endif
+#ifndef LCD_PIX_H
+#define LCD_PIX_H DOOM_GAME_LCD_H
+#endif
 #define LITE_W LCD_PIX_W
 #define LITE_H LCD_PIX_H
 #define LITE_RAY_PIXELS 2u
@@ -37,11 +36,6 @@ static const int16_t quarter_sine[65] = {
     15426, 15557, 15679, 15791, 15893, 15986, 16069, 16143, 16207,
     16261, 16305, 16340, 16364, 16379, 16384,
 };
-
-#ifndef DOOM_LITE_RAY_TEST
-volatile int SkyOS_DoomLiteRunning;
-static uint8_t barrier_pixel;
-#endif
 
 /* Reference-test depth only: production sprites use per-ray wall spans. */
 #ifdef DOOM_LITE_RAY_TEST
@@ -70,6 +64,22 @@ static int sine_q14_fine(uint16_t angle) {
     return low + ((high - low) * fraction) / 4;
 }
 
+/* Fallback door shading is also used by the native Game renderer. */
+static uint8_t door_panel_color(unsigned y, unsigned top, unsigned bottom,
+                                 unsigned u) {
+    const unsigned height = bottom - top;
+    const unsigned v = y - top;
+    if (height < 8u) return 70u;
+    if (u < 20u || u > 235u || v < 2u || v >= height - 2u) return 30u;
+    if (u >= 118u && u <= 137u) return 42u;
+    if (height >= 24u &&
+        ((v >= height / 4u && v < height / 4u + 2u) ||
+         (v >= height * 3u / 4u && v < height * 3u / 4u + 2u))) return 75u;
+    if (u < 32u || u > 223u) return 112u;
+    return u < 128u ? 184u : 207u;
+}
+
+#if defined(DOOM_LITE_RAY_TEST) || defined(SKYOS_BUILD_LEGACY_DOOM)
 #if defined(DOOM_LITE_RAY_TEST) && defined(__GNUC__)
 __attribute__((unused))
 #endif
@@ -276,34 +286,6 @@ static RayHit cast_game_ray(int32_t x, int32_t y, uint16_t angle,
     return hit;
 }
 
-#ifndef DOOM_LITE_RAY_TEST
-static void present(uint8_t *pixels) {
-    ll_disp_put_area(pixels, 0, 0, LITE_W - 1u, LITE_H - 1u);
-    /* The display queue borrows its source. Drain the full-screen draw
-     * before the next frame modifies the shared UI framebuffer. */
-    for (unsigned i = 0; i < 5u; ++i)
-        ll_disp_put_area(&barrier_pixel, 0, 0, 0, 0);
-}
-#endif
-
-/* A closed WAD door must read as a separate surface on the small grayscale
- * display. Dark frame and centre seam surround light metal panels. */
-static uint8_t door_panel_color(unsigned y, unsigned top, unsigned bottom,
-                                 unsigned u) {
-    const unsigned height = bottom - top;
-    const unsigned v = y - top;
-    if (height < 8u) return 70u;
-    if (u < 20u || u > 235u || v < 2u || v >= height - 2u)
-        return 30u;
-    if (u >= 118u && u <= 137u) return 42u;
-    if (height >= 24u &&
-        ((v >= height / 4u && v < height / 4u + 2u) ||
-         (v >= height * 3u / 4u && v < height * 3u / 4u + 2u)))
-        return 75u;
-    if (u < 32u || u > 223u) return 112u;
-    return u < 128u ? 184u : 207u;
-}
-
 static void draw_scene(uint8_t *pixels, int32_t x, int32_t y, uint8_t facing,
                        int game_mode,
                        const uint8_t door_open[E1M1_DOOR_COUNT]) {
@@ -448,100 +430,6 @@ void DoomLite_RenderGameFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
     }
 }
 
+#endif /* Host reference / optional legacy grid renderer. */
+
 #include "DoomLiteScene.inc"
-
-#ifndef DOOM_LITE_RAY_TEST
-static void move_player(int32_t *x, int32_t *y, uint8_t facing, int forward) {
-    const int32_t dx = (sine_q14((uint8_t)(facing + 64u)) * 12 * forward) >> 6;
-    const int32_t dy = (sine_q14(facing) * 12 * forward) >> 6;
-    const int32_t next_x = *x + dx;
-    const int32_t next_y = *y + dy;
-    /* A small two-axis clearance keeps the player out of rasterized walls. */
-    if (!wall_at_q8(next_x + 8 * 256, *y) &&
-        !wall_at_q8(next_x - 8 * 256, *y)) *x = next_x;
-    if (!wall_at_q8(*x, next_y + 8 * 256) &&
-        !wall_at_q8(*x, next_y - 8 * 256)) *y = next_y;
-}
-
-static void doom_lite_task(void *unused) {
-    (void)unused;
-    uint8_t *pixels = SystemUIBorrowFrameBuffer();
-    if (!pixels) {
-        printf("DOOMLITE_ERROR framebuffer\n");
-        SystemUIResume();
-        SkyOS_DoomLiteRunning = 0;
-        vTaskDelete(NULL);
-        return;
-    }
-    int32_t x = E1M1_START_X * 256, y = E1M1_START_Y * 256;
-    uint8_t facing = 0;
-    int map_mode = 0;
-    uint16_t previous_key = 0;
-    uint32_t next_key_ms = 0, next_frame_ms = 0;
-    uint32_t batch_start_ms;
-    uint32_t previous_frame_ms = 0, max_interval_ms = 0;
-    uint32_t batch_render_ms = 0, batch_queue_ms = 0;
-    unsigned frames = 0;
-
-    while (ll_vm_check_key() >> 16) vTaskDelay(pdMS_TO_TICKS(20));
-    batch_start_ms = ll_get_time_ms();
-    for (;;) {
-        const uint32_t now = ll_get_time_ms();
-        const uint32_t raw = ll_vm_check_key();
-        const uint16_t key = raw >> 16 ? (uint16_t)raw : 0;
-        if (key == KEY_F6 || key == KEY_ON) break;
-        if (key && (key != previous_key || (int32_t)(now - next_key_ms) >= 0)) {
-            if (key == KEY_LEFT) facing -= 3u;
-            if (key == KEY_RIGHT) facing += 3u;
-            if (key == KEY_UP) move_player(&x, &y, facing, 1);
-            if (key == KEY_DOWN) move_player(&x, &y, facing, -1);
-            if (key == KEY_F5 && key != previous_key) map_mode = !map_mode;
-            next_key_ms = now + 90u;
-        }
-        previous_key = key;
-
-        if ((int32_t)(now - next_frame_ms) >= 0) {
-            const uint32_t render_begin = ll_get_time_ms();
-            if (previous_frame_ms) {
-                const uint32_t interval = render_begin - previous_frame_ms;
-                if (interval > max_interval_ms) max_interval_ms = interval;
-            }
-            previous_frame_ms = render_begin;
-            DoomLite_RenderFrame(pixels, x, y, facing, map_mode);
-            const uint32_t render_end = ll_get_time_ms();
-            present(pixels);
-            const uint32_t end = ll_get_time_ms();
-            batch_render_ms += render_end - render_begin;
-            batch_queue_ms += end - render_end;
-            if (++frames % 32u == 0u) {
-                printf("DOOMLITE_PERF frames=32 elapsed_ms=%lu render_ms=%lu queue_ms=%lu max_interval_ms=%lu map=%d\n",
-                       (unsigned long)(end - batch_start_ms),
-                       (unsigned long)batch_render_ms,
-                       (unsigned long)batch_queue_ms,
-                       (unsigned long)max_interval_ms, map_mode);
-                batch_start_ms = end;
-                batch_render_ms = batch_queue_ms = max_interval_ms = 0;
-            }
-            next_frame_ms = render_begin + 33u;
-        }
-        vTaskDelay(pdMS_TO_TICKS(5));
-    }
-    printf("DOOMLITE_EXIT frames=%u\n", frames);
-    for (unsigned release_wait = 0; (ll_vm_check_key() >> 16) &&
-            release_wait < 50u; ++release_wait)
-        vTaskDelay(pdMS_TO_TICKS(20));
-    SystemUIResume();
-    SkyOS_DoomLiteRunning = 0;
-    vTaskDelete(NULL);
-}
-
-void DoomLite_Start(void) {
-    if (SkyOS_DoomLiteRunning) return;
-    SkyOS_DoomLiteRunning = 1;
-    if (xTaskCreate(doom_lite_task, "DoomLite", 2048, NULL,
-                    configMAX_PRIORITIES - 3, NULL) != pdPASS) {
-        SkyOS_DoomLiteRunning = 0;
-        printf("DOOMLITE_ERROR task allocation\n");
-    }
-}
-#endif

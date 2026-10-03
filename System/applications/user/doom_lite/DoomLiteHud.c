@@ -35,10 +35,18 @@ static uint8_t glyph_row(char character, unsigned row) {
     return 0u;
 }
 
-static void draw_text_color(uint8_t *pixels, unsigned x, unsigned y,
-                            const char *message, unsigned scale, uint8_t ink) {
+unsigned DoomLite_UiReadonlyBytes(void) {
+    return E1M1_UI_PIXEL_BYTES + E1M1_UI_PATCH_COUNT * sizeof(E1M1UiPatch) +
+           sizeof(e1m1_ui_gray) + sizeof(e1m1_ui_flash_gray) +
+           sizeof(ui_digits) + sizeof(ui_small_digits) + sizeof(ui_faces) +
+           sizeof(glyph_digits) + sizeof(glyph_letters);
+}
+
+static void draw_text_color_limit(uint8_t *pixels, unsigned x, unsigned y,
+                                  const char *message, unsigned scale,
+                                  uint8_t ink, unsigned right) {
     for (; *message; ++message, x += 4u * scale) {
-        if (x + 3u * scale > DOOM_GAME_LCD_W || y + 5u * scale > DOOM_GAME_LCD_H)
+        if (x + 3u * scale > right || y + 5u * scale > DOOM_GAME_LCD_H)
             break;
         for (unsigned row = 0; row < 5u; ++row) {
             const uint8_t bits = glyph_row(*message, row);
@@ -51,6 +59,11 @@ static void draw_text_color(uint8_t *pixels, unsigned x, unsigned y,
             }
         }
     }
+}
+
+static void draw_text_color(uint8_t *pixels, unsigned x, unsigned y,
+                            const char *message, unsigned scale, uint8_t ink) {
+    draw_text_color_limit(pixels, x, y, message, scale, ink, DOOM_GAME_LCD_W);
 }
 
 static void draw_text(uint8_t *pixels, unsigned x, unsigned y,
@@ -71,8 +84,9 @@ static void draw_end_panel(uint8_t *pixels, const char *title,
     draw_text(pixels, 100u, 77u, "F6 EXIT", 2u);
 }
 
-static void draw_patch(uint8_t *pixels, const E1M1UiPatch *patch,
-                       int x, int y, unsigned clip_bottom) {
+static void draw_patch_palette(uint8_t *pixels, const E1M1UiPatch *patch,
+                               int x, int y, unsigned clip_bottom,
+                               const uint8_t *gray) {
     const int x0 = x < 0 ? 0 : x;
     const int x1 = x + patch->width > (int)DOOM_GAME_LCD_W
         ? (int)DOOM_GAME_LCD_W : x + patch->width;
@@ -85,9 +99,14 @@ static void draw_patch(uint8_t *pixels, const E1M1UiPatch *patch,
         for (int sx = x0; sx < x1; ++sx, ++source) {
             const unsigned code = (patch->pixels[source >> 1] >>
                                    ((source & 1u) * 4u)) & 15u;
-            if (code) row[sx] = e1m1_ui_gray[code];
+            if (code) row[sx] = gray[code];
         }
     }
+}
+
+static void draw_patch(uint8_t *pixels, const E1M1UiPatch *patch,
+                       int x, int y, unsigned clip_bottom) {
+    draw_patch_palette(pixels, patch, x, y, clip_bottom, e1m1_ui_gray);
 }
 
 /* Right-aligned original digit patches; omit unnecessary leading zeroes. */
@@ -108,7 +127,11 @@ static void draw_status_bar(uint8_t *pixels, const DoomLiteGame *game,
     memset(pixels + top * DOOM_GAME_LCD_W, 237,
            DOOM_GAME_STATUS_HEIGHT * DOOM_GAME_LCD_W);
     draw_patch(pixels, &ui_stbar, 0, (int)top, DOOM_GAME_LCD_H);
-    draw_patch_number(pixels, 34u, top + 4u, game->ammo, 0);
+    draw_patch_number(pixels, 34u, top + 4u, DoomLiteGame_CurrentAmmo(game), 0);
+    for (unsigned y = top + 19u; y < DOOM_GAME_LCD_H; ++y)
+        memset(pixels + y * DOOM_GAME_LCD_W, 237, 38u);
+    draw_text(pixels, game->current_weapon == DL_WEAPON_SHOTGUN ? 19u : 16u,
+              top + 20u, game->current_weapon == DL_WEAPON_SHOTGUN ? "SG" : "PIS", 1u);
     draw_patch_number(pixels, 71u, top + 4u, game->health, 0);
     draw_patch(pixels, &ui_sttprcnt, 72, (int)top + 4, DOOM_GAME_LCD_H);
     /* A compact level/contrast (or map zoom) row fits above the kill count,
@@ -135,8 +158,8 @@ static void draw_status_bar(uint8_t *pixels, const DoomLiteGame *game,
         draw_text_color(pixels, 207u, ky + 1u, key_names[k], 1u,
                         keys[k] ? 16u : 168u);
     }
-    /* The pistol is the playable weapon. Other pickups retain their real
-     * inventory for the next level; the small rows display that inventory. */
+    /* The large counter follows the selected weapon; the small rows retain
+     * all four ammunition inventories and their backpack capacities. */
     draw_patch_number(pixels, 230u, top + 1u, game->ammo, 1);
     draw_patch_number(pixels, 250u, top + 1u, game->backpack ? 400u : 200u, 1);
     const uint16_t ammunition[3] = {game->shells, game->rockets, game->cells};
@@ -153,12 +176,28 @@ static void draw_status_bar(uint8_t *pixels, const DoomLiteGame *game,
 void DoomLite_DrawGameWeapon(uint8_t *pixels, const DoomLiteGame *game) {
     if (!pixels || !game || !game->health || game->completed) return;
     const E1M1UiPatch *gun = &ui_pisga0;
-    if (game->pistol_tics > 9u || (game->pistol_tics && game->pistol_tics <= 5u))
-        gun = &ui_pisgb0;
-    else if (game->pistol_tics) gun = &ui_pisgc0;
-    draw_patch(pixels, gun, gun->x, gun->y, DOOM_GAME_VIEW_H);
-    if (game->pistol_tics > 8u)
-        draw_patch(pixels, &ui_pisfa0, ui_pisfa0.x, ui_pisfa0.y, DOOM_GAME_VIEW_H);
+    const E1M1UiPatch *flash = NULL;
+    const unsigned tics = game->pistol_tics;
+    if (game->current_weapon == DL_WEAPON_SHOTGUN) {
+        gun = &ui_shtga0;
+        /* Shot occurs immediately, followed by the original B/C/D pump
+         * poses and their return. All positions are baked from WAD offsets. */
+        if (tics >= 29u) flash = tics >= 32u ? &ui_shtfa0 : &ui_shtfb0;
+        else if (tics >= 24u) gun = &ui_shtgb0;
+        else if (tics >= 19u) gun = &ui_shtgc0;
+        else if (tics >= 15u) gun = &ui_shtgd0;
+        else if (tics >= 10u) gun = &ui_shtgc0;
+        else if (tics >= 5u) gun = &ui_shtgb0;
+    } else {
+        if (tics > 9u || (tics && tics <= 5u)) gun = &ui_pisgb0;
+        else if (tics) gun = &ui_pisgc0;
+        if (tics > 8u) flash = &ui_pisfa0;
+    }
+    const uint8_t *gray = flash ? e1m1_ui_flash_gray : e1m1_ui_gray;
+    draw_patch_palette(pixels, gun, gun->x, gun->y, DOOM_GAME_VIEW_H, gray);
+    if (flash)
+        draw_patch_palette(pixels, flash, flash->x, flash->y,
+                           DOOM_GAME_VIEW_H, gray);
 }
 
 void DoomLite_DrawGameHud(uint8_t *pixels, const DoomLiteGame *game,
@@ -166,12 +205,12 @@ void DoomLite_DrawGameHud(uint8_t *pixels, const DoomLiteGame *game,
     if (!pixels || !game) return;
     draw_status_bar(pixels, game, map_zoom);
     if (message) {
-        /* Brief events replace only the three left labels. Counters, face,
-         * armor, keys and ammunition remain visible; no world row is covered. */
+        /* Brief events use the health/kill labels. The selected weapon and
+         * every counter remain visible; no world row is covered. */
         const unsigned y = DOOM_GAME_VIEW_H + 19u;
         for (unsigned row = y; row < DOOM_GAME_LCD_H; ++row)
-            memset(pixels + row * DOOM_GAME_LCD_W, 237, 116u);
-        draw_text(pixels, 4u, y + 1u, message, 1u);
+            memset(pixels + row * DOOM_GAME_LCD_W + 38u, 237, 78u);
+        draw_text_color_limit(pixels, 42u, y + 1u, message, 1u, 16u, 116u);
     }
     if (game->completed) {
         const char *title = game->map_index ? "E1M2 CLEAR" : "E1M1 CLEAR";

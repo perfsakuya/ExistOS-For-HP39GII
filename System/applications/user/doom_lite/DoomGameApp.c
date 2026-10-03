@@ -11,6 +11,7 @@
 #include "DoomLiteGame.h"
 #include "DoomLiteRender.h"
 #include "DoomLiteHud.h"
+#include "DoomTestMap.h"
 
 #define GAME_PIXELS (LCD_PIX_W * LCD_PIX_H)
 #define GAME_FRAME_PERIOD_US 33000u
@@ -25,6 +26,10 @@
 volatile int SkyOS_DoomGameRunning;
 static DoomLiteGame game_state;
 static uint8_t display_barrier_pixel;
+static unsigned game_test_mode, game_test_preset;
+static const char *const test_hints[DOOM_TEST_PRESET_COUNT] = {
+    "SPRITES F2 NEXT", "COMBAT F2 NEXT", "ITEMS F2 NEXT"
+};
 
 typedef struct {
     uint32_t wall_start_ms;
@@ -33,6 +38,7 @@ typedef struct {
     uint32_t scene_total_us, scene_max_us;
     uint32_t sprite_total_us, sprite_max_us;
     uint32_t weapon_total_us, weapon_max_us;
+    uint32_t preview_total_us, preview_max_us, preview_calls;
     uint32_t hud_total_us, hud_max_us;
     uint32_t lcd_total_us, lcd_max_us;
     uint32_t interval_total_us, interval_max_us;
@@ -66,7 +72,9 @@ static void log_perf(GamePerf *perf, DoomLiteGame *game,
            "x=%ld y=%ld zoom=%u scene_total_us=%lu scene_max_us=%lu "
            "sprite_total_us=%lu sprite_max_us=%lu hud_total_us=%lu hud_max_us=%lu "
            "weapon_total_us=%lu weapon_max_us=%lu pistol_tics=%u "
-           "level=%u armor=%u red=%u yellow=%u contrast=%u actors=%u movers=%u frame_count=%u\n",
+           "level=%u armor=%u red=%u yellow=%u contrast=%u actors=%u movers=%u frame_count=%u "
+           "test=%u preset=%u weapon=%u weapon_ammo=%u shells=%u shotgun_cooldown=%u "
+           "preview_total_us=%lu preview_max_us=%lu preview_calls=%lu\n",
            perf->frames, (unsigned long)(now_ms - perf->wall_start_ms),
            perf->logic_ticks,
            rounded_ms(perf->logic_total_us), rounded_ms(perf->logic_max_us),
@@ -93,14 +101,18 @@ static void log_perf(GamePerf *perf, DoomLiteGame *game,
            (unsigned)game->armor, (unsigned)game->red_key,
            (unsigned)game->yellow_key, (unsigned)game->contrast + 1u,
            (unsigned)game->actor_count, (unsigned)game->metrics.active_movers,
-           perf->total_frames);
+           perf->total_frames, game_test_mode, game_test_preset,
+           (unsigned)game->current_weapon, (unsigned)DoomLiteGame_CurrentAmmo(game),
+           (unsigned)game->shells, (unsigned)game->shotgun_cooldown,
+           (unsigned long)perf->preview_total_us, (unsigned long)perf->preview_max_us,
+           (unsigned long)perf->preview_calls);
     DoomLiteGameProfile profile;
     DoomLiteGame_TakeProfile(game, &profile);
     static const char *const names[DL_PROFILE_COUNT] = {
         "ai", "anim", "mover", "collision", "los"
     };
-    printf("DOOMG_DETAIL frames=%u tics=%u level=%u", perf->frames,
-           perf->logic_ticks, (unsigned)game->map_index + 1u);
+    printf("DOOMG_DETAIL frames=%u tics=%u level=%u test=%u preset=%u", perf->frames,
+           perf->logic_ticks, (unsigned)game->map_index + 1u, game_test_mode, game_test_preset);
     for (unsigned i = 0; i < DL_PROFILE_COUNT; ++i)
         printf(" %s_total_us=%lu %s_max_us=%lu %s_calls=%lu", names[i],
                (unsigned long)profile.total_us[i], names[i],
@@ -151,6 +163,7 @@ static void log_perf(GamePerf *perf, DoomLiteGame *game,
 }
 
 static const char *message_for_event(uint32_t flags) {
+    if (flags & DL_EVENT_WEAPON) return "WEAPON CHANGED";
     if (flags & DL_EVENT_EXIT) return "EXIT";
     if (flags & DL_EVENT_BLUE_KEY) return "BLUE KEY";
     if (flags & DL_EVENT_RED_KEY) return "RED KEY";
@@ -179,6 +192,7 @@ static uint16_t read_buttons(uint16_t key) {
         case KEY_RIGHT: return DL_GAME_RIGHT;
         case KEY_F1: return DL_GAME_FIRE;
         case KEY_F2: return DL_GAME_USE;
+        case KEY_F4: return DL_GAME_SWITCH;
         default: return 0u;
     }
 }
@@ -194,8 +208,8 @@ static void present(uint8_t *pixels) {
 static void doom_game_task(void *unused) {
     (void)unused;
     const uint32_t task_start_ms = ll_get_time_ms();
-    printf("DOOMG_BOOT phase=task_start ms=%lu\n",
-           (unsigned long)task_start_ms);
+    printf("DOOMG_BOOT phase=task_start ms=%lu test=%u preset=%u\n",
+           (unsigned long)task_start_ms, game_test_mode, game_test_preset);
     uint8_t *pixels = SystemUIBorrowFrameBuffer();
     if (!pixels) {
         printf("DOOMG_BOOT phase=framebuffer_error ms=%lu\n",
@@ -210,16 +224,30 @@ static void doom_game_task(void *unused) {
     DoomLiteGame_SetClock(ll_get_time_us);
     DoomLite_SetRenderClock(ll_get_time_us);
     const uint32_t init_start_us = ll_get_time_us();
-    DoomLiteGame_Init(&game_state);
-    printf("DOOMG_BOOT phase=game_init ms=%lu duration_us=%lu level=1 state_bytes=%u render_bytes=%u "
-           "x=%ld y=%ld hp=%u ammo=%u enemies=%u world_bytes=%u sprite_bytes=%u\n",
+    const int initialized = game_test_mode
+        ? DoomTestMap_InitGame(&game_state, game_test_preset)
+        : DoomLiteGame_InitMap(&game_state, 0u);
+    if (!initialized) {
+        printf("DOOMG_BOOT phase=map_error test=%u\n", game_test_mode);
+        SystemUIResume();
+        SkyOS_DoomGameRunning = 0;
+        vTaskDelete(NULL);
+        return;
+    }
+    printf("DOOMG_BOOT phase=game_init ms=%lu duration_us=%lu level=%u state_bytes=%u render_bytes=%u "
+           "x=%ld y=%ld hp=%u ammo=%u enemies=%u world_bytes=%u sprite_bytes=%u ui_bytes=%u "
+           "test=%u preset=%u test_bytes=%u weapon=%u weapon_ammo=%u shells=%u\n",
            (unsigned long)ll_get_time_ms(),
            (unsigned long)(ll_get_time_us() - init_start_us),
+           (unsigned)game_state.map_index + 1u,
            (unsigned)sizeof(game_state),
            DoomLite_RenderWorkingSetBytes(),
            (long)(game_state.x_q8 >> 8), (long)(game_state.y_q8 >> 8),
            (unsigned)game_state.health, (unsigned)game_state.ammo,
-           (unsigned)game_state.total_enemies, DoomLite_WorldReadonlyBytes(), DoomLite_SpriteReadonlyBytes());
+           (unsigned)game_state.total_enemies, DoomLite_WorldReadonlyBytes(), DoomLite_SpriteReadonlyBytes(),
+           DoomLite_UiReadonlyBytes(), game_test_mode, game_test_preset, DoomTestMap_ReadonlyBytes(),
+           (unsigned)game_state.current_weapon, (unsigned)DoomLiteGame_CurrentAmmo(&game_state),
+           (unsigned)game_state.shells);
 
     while (ll_vm_check_key() >> 16) vTaskDelay(pdMS_TO_TICKS(20));
     printf("DOOMG_BOOT phase=ready ms=%lu\n",
@@ -229,7 +257,7 @@ static void doom_game_task(void *unused) {
     uint32_t previous_us = ll_get_time_us();
     uint32_t accumulator = 0u;
     uint32_t message_until_tick = 0u;
-    const char *message = NULL;
+    const char *message = game_test_mode ? DoomTestMap_PresetName(game_test_preset) : NULL;
     uint16_t previous_key = GAME_NO_KEY;
     uint16_t pending_actions = 0u;
     unsigned total_frames = 0u;
@@ -251,25 +279,32 @@ static void doom_game_task(void *unused) {
         const uint16_t key = raw_key >> 16 ? (uint16_t)raw_key : GAME_NO_KEY;
         if (key == KEY_F6 || key == KEY_ON) break;
         if (key == KEY_F2 && previous_key != KEY_F2 &&
-            (game_state.completed || !game_state.health)) {
+            (game_test_mode || game_state.completed || !game_state.health)) {
             if (perf.frames || perf.logic_ticks)
                 log_perf(&perf, &game_state, map_mode, map_zoom, ll_get_time_ms());
             const uint32_t load_start_us = ll_get_time_us();
             const unsigned contrast = game_state.contrast;
             const unsigned level = game_state.map_index;
-            if (game_state.completed && level + 1u < DOOM_MAP_COUNT)
+            if (game_test_mode) {
+                if (game_state.health)
+                    game_test_preset = (game_test_preset + 1u) % DoomTestMap_PresetCount();
+                DoomTestMap_InitGame(&game_state, game_test_preset);
+            } else if (game_state.completed && level + 1u < DOOM_MAP_COUNT)
                 DoomLiteGame_NextMap(&game_state);
             else
                 DoomLiteGame_InitMap(&game_state, level);
             game_state.contrast = (uint8_t)contrast;
             game_state.previous_buttons = DL_GAME_USE; /* Wait for this F2 release. */
             printf("DOOMG_BOOT phase=map_load level=%u duration_us=%lu "
-                   "state_bytes=%u actors=%u hp=%u ammo=%u armor=%u\n",
+                   "state_bytes=%u actors=%u hp=%u ammo=%u armor=%u test=%u preset=%u "
+                   "weapon=%u weapon_ammo=%u shells=%u\n",
                    (unsigned)game_state.map_index + 1u,
                    (unsigned long)(ll_get_time_us() - load_start_us),
                    (unsigned)sizeof(game_state), (unsigned)game_state.actor_count,
                    (unsigned)game_state.health, (unsigned)game_state.ammo,
-                   (unsigned)game_state.armor);
+                   (unsigned)game_state.armor, game_test_mode, game_test_preset,
+                   (unsigned)game_state.current_weapon, (unsigned)DoomLiteGame_CurrentAmmo(&game_state),
+                   (unsigned)game_state.shells);
             accumulator = 0u;
             previous_us = ll_get_time_us();
             perf.wall_start_ms = ll_get_time_ms();
@@ -277,7 +312,8 @@ static void doom_game_task(void *unused) {
             pending_actions = 0u;
             previous_key = key;
             map_mode = 0;
-            message = NULL;
+            message = game_test_mode ? DoomTestMap_PresetName(game_test_preset) : NULL;
+            message_until_tick = 0u;
             continue;
         }
         if (key == KEY_F3 && previous_key != KEY_F3) {
@@ -306,22 +342,40 @@ static void doom_game_task(void *unused) {
                    (unsigned)game_state.kills, (unsigned)game_state.blue_key,
                    (unsigned)game_state.completed);
         }
-        /* Keep a short F1/F2 tap until the next 35 Hz tick; the gameplay
+        /* Keep a short F1/F2/F4 tap until the next 35 Hz tick; the gameplay
          * module still performs held-key edge detection for longer presses. */
         if (key == KEY_F1 && previous_key != KEY_F1)
             pending_actions |= DL_GAME_FIRE;
         if (key == KEY_F2 && previous_key != KEY_F2)
             pending_actions |= DL_GAME_USE;
+        if (!map_mode && key == KEY_F4 && previous_key != KEY_F4)
+            pending_actions |= DL_GAME_SWITCH;
         previous_key = key;
         uint16_t buttons = read_buttons(key) | pending_actions;
+        if (map_mode) buttons &= ~DL_GAME_SWITCH;
+        if (game_test_mode) buttons &= ~DL_GAME_USE;
 
         unsigned run = 0u;
         while (accumulator >= GAME_TIC_THRESHOLD &&
                run < GAME_MAX_CATCHUP_TICS) {
             const uint32_t logic_start_us = ll_get_time_us();
+            /* A physical release/repress can occur between logic ticks.
+             * Captured new presses must not inherit the previous tick's
+             * held bit. Mask with buttons so map/test-only controls cannot
+             * enter gameplay; subsequent catch-up ticks see a held key. */
+            game_state.previous_buttons &= (uint8_t)~(pending_actions & buttons);
             const uint32_t events = DoomLiteGame_Step(&game_state, buttons);
+            if (game_test_mode && game_state.freeze_actors) {
+                const uint32_t preview_start_us = ll_get_time_us();
+                DoomTestMap_StepPreview(&game_state);
+                record_time(ll_get_time_us() - preview_start_us,
+                            &perf.preview_total_us, &perf.preview_max_us);
+                ++perf.preview_calls;
+            }
             pending_actions = 0u;
             buttons = read_buttons(key);
+            if (map_mode) buttons &= ~DL_GAME_SWITCH;
+            if (game_test_mode) buttons &= ~DL_GAME_USE;
             const uint32_t logic_us = ll_get_time_us() - logic_start_us;
             record_time(logic_us, &perf.logic_total_us, &perf.logic_max_us);
             ++perf.logic_ticks;
@@ -329,14 +383,18 @@ static void doom_game_task(void *unused) {
             accumulator -= GAME_TIC_THRESHOLD;
             if (events) {
                 printf("DOOMG_EVENT tick=%lu flags=0x%08lx hp=%u ammo=%u kills=%u blue=%u completed=%u pistol_tics=%u "
-                       "level=%u armor=%u red=%u yellow=%u\n",
+                       "level=%u armor=%u red=%u yellow=%u test=%u preset=%u "
+                       "weapon=%u weapon_ammo=%u shells=%u shotgun_cooldown=%u\n",
                        (unsigned long)game_state.ticks, (unsigned long)events,
                        (unsigned)game_state.health, (unsigned)game_state.ammo,
                        (unsigned)game_state.kills,
                        (unsigned)game_state.blue_key,
                        (unsigned)game_state.completed, (unsigned)game_state.pistol_tics,
                        (unsigned)game_state.map_index + 1u, (unsigned)game_state.armor,
-                       (unsigned)game_state.red_key, (unsigned)game_state.yellow_key);
+                       (unsigned)game_state.red_key, (unsigned)game_state.yellow_key,
+                       game_test_mode, game_test_preset, (unsigned)game_state.current_weapon,
+                       (unsigned)DoomLiteGame_CurrentAmmo(&game_state), (unsigned)game_state.shells,
+                       (unsigned)game_state.shotgun_cooldown);
                 message = message_for_event(events);
                 message_until_tick = game_state.ticks + 70u;
             }
@@ -396,7 +454,9 @@ static void doom_game_task(void *unused) {
             if (message && (int32_t)(game_state.ticks - message_until_tick) >= 0)
                 message = NULL;
             const uint32_t hud_start_us = ll_get_time_us();
-            DoomLite_DrawGameHud(pixels, &game_state, message,
+            const char *hud_message = message ? message
+                : game_test_mode ? test_hints[game_test_preset] : NULL;
+            DoomLite_DrawGameHud(pixels, &game_state, hud_message,
                                  map_mode ? map_zoom : 0u);
             record_time(ll_get_time_us() - hud_start_us,
                         &perf.hud_total_us, &perf.hud_max_us);
@@ -416,9 +476,9 @@ static void doom_game_task(void *unused) {
 
     if (perf.frames || perf.logic_ticks)
         log_perf(&perf, &game_state, map_mode, map_zoom, ll_get_time_ms());
-    printf("DOOMG_EXIT phase=key frames=%u ticks=%lu ms=%lu\n",
+    printf("DOOMG_EXIT phase=key frames=%u ticks=%lu ms=%lu test=%u preset=%u\n",
            total_frames, (unsigned long)game_state.ticks,
-           (unsigned long)ll_get_time_ms());
+           (unsigned long)ll_get_time_ms(), game_test_mode, game_test_preset);
     const uint32_t release_start_ms = ll_get_time_ms();
     for (unsigned i = 0; (ll_vm_check_key() >> 16) && i < 50u; ++i)
         vTaskDelay(pdMS_TO_TICKS(20));
@@ -435,13 +495,18 @@ static void doom_game_task(void *unused) {
     vTaskDelete(NULL);
 }
 
-void DoomGame_Start(void) {
+static void start_game(unsigned test_mode) {
     if (SkyOS_DoomGameRunning) return;
+    game_test_mode = test_mode;
+    game_test_preset = 0u;
     SkyOS_DoomGameRunning = 1;
-    if (xTaskCreate(doom_game_task, "DoomGame", 2048, NULL,
+    if (xTaskCreate(doom_game_task, test_mode ? "GameTest" : "DoomGame", 2048, NULL,
                     configMAX_PRIORITIES - 3, NULL) != pdPASS) {
         SkyOS_DoomGameRunning = 0;
         printf("DOOMG_BOOT phase=task_allocation_error ms=%lu\n",
                (unsigned long)ll_get_time_ms());
     }
 }
+
+void DoomGame_Start(void) { start_game(0u); }
+void DoomTest_Start(void) { start_game(1u); }

@@ -51,7 +51,8 @@
   <div class="metric"><div class="label">Game 墙面 / 地图 均 / 峰</div><div class="value" id="gamescene">—</div></div>
   <div class="metric"><div class="label">Game 怪物 / 道具 均 / 峰</div><div class="value" id="gamesprite">—</div></div>
   <div class="metric"><div class="label">Game UI 均 / 峰</div><div class="value" id="gamehud">—</div></div>
-  <div class="metric"><div class="label">Game 手枪 / 闪光 均 / 峰</div><div class="value" id="gameweapon">—</div></div>
+  <div class="metric"><div class="label">Game 武器 / 闪光 均 / 峰</div><div class="value" id="gameweapon">—</div></div>
+  <div class="metric"><div class="label">Test 预览动画 单次均 / 峰</div><div class="value" id="gamepreview">—</div></div>
   <div class="metric"><div class="label">Game LCD 均 / 峰</div><div class="value" id="gamelcd">—</div></div>
   <div class="metric"><div class="label">Game 帧间隔 均 / 峰</div><div class="value" id="gameinterval">—</div></div>
   <div class="metric"><div class="label">AI 每 tic / 单次峰值</div><div class="value" id="gameai">—</div></div>
@@ -109,12 +110,14 @@ async function refresh() {
       byId(`game${phase}`).textContent = s.game?.[`${phase}_ms`] != null
         ? `${s.game[`${phase}_ms`]} / ${s.game[`${phase}_max_ms`]} ms` : '—';
     byId('gamelcd').textContent = s.game ? `${s.game.lcd_ms} / ${s.game.lcd_max_ms} ms` : '—';
+    byId('gamepreview').textContent = s.game?.preview_ms != null
+      ? `${s.game.preview_ms} / ${s.game.preview_max_ms} ms` : '—';
     byId('gameinterval').textContent = s.game ? `${s.game.interval_ms} / ${s.game.interval_max_ms} ms` : '—';
     for (const phase of ['ai', 'anim', 'mover', 'collision', 'los'])
       byId(`game${phase}`).textContent = s.game_detail?.[`${phase}_ms`] != null
         ? `${s.game_detail[`${phase}_ms`]} / ${s.game_detail[`${phase}_max_ms`]} ms` : '—';
     byId('gamestate').textContent = s.game
-      ? `E1M${s.game.level} · HP ${s.game.health ?? '—'} · 护甲 ${s.game.armor ?? '—'} · 弹药 ${s.game.ammo ?? '—'} · 击杀 ${s.game.kills ?? '—'} · 钥匙 B/R/Y ${[s.game.blue_key, s.game.red_key, s.game.yellow_key].map(v => v == null ? '—' : v ? '有' : '无').join('/')} · 对比度 C${s.game.contrast ?? '—'}`
+      ? `${s.game_label ?? `E1M${s.game.level}`} · HP ${s.game.health ?? '—'} · 护甲 ${s.game.armor ?? '—'} · ${s.game.weapon_name ?? 'PIS'} 弹药 ${s.game.weapon_ammo ?? s.game.ammo ?? '—'} · 炮弹 ${s.game.shells ?? '—'} · 击杀 ${s.game.kills ?? '—'} · 钥匙 B/R/Y ${[s.game.blue_key, s.game.red_key, s.game.yellow_key].map(v => v == null ? '—' : v ? '有' : '无').join('/')} · 对比度 C${s.game.contrast ?? '—'}`
       : 'Game 状态 —';
     const counters = s.game_detail?.raw;
     for (const [phase, label] of [['ray','射线几何'], ['plane','地面／天花板'], ['wall','墙面贴图']]) {
@@ -123,7 +126,7 @@ async function refresh() {
         : `${label} —`;
     }
     byId('gamefixed').textContent = s.game_resources
-      ? `固定状态 ${s.game_resources.state_kb} KB · 固定渲染缓存 ${s.game_resources.render_kb} KB · 世界只读资源 ${s.game_world_kb ?? '—'} KB · 精灵只读资源 ${s.game_sprite_kb ?? '—'} KB · 共用 LCD 帧缓冲（不计入 malloc 曲线）` : 'Game 固定内存 —';
+      ? `固定状态 ${s.game_resources.state_kb} KB · 固定渲染缓存 ${s.game_resources.render_kb} KB · 世界只读资源 ${s.game_world_kb ?? '—'} KB · 精灵只读资源 ${s.game_sprite_kb ?? '—'} KB · UI 只读 ${s.game_ui_kb ?? '—'} KB · Test 地图只读 ${s.game_test_kb ?? '—'} KB · 共用 LCD 帧缓冲（不计入 malloc 曲线）` : 'Game 固定内存 —';
     byId('gamepool').textContent = counters
       ? `怪物峰值 ${counters.actor_peak ?? '—'}/128 · 门/平台峰值 ${counters.mover_peak ?? '—'}/64 · 溢出 ${counters.overflows ?? '—'}` : 'Game 固定容量 —';
     byId('gamerays').textContent = counters && counters.frames

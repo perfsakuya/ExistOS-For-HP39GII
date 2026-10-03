@@ -1,7 +1,9 @@
 #pragma once
 
 #include <stdint.h>
+#if defined(DOOM_LITE_RAY_TEST) || defined(SKYOS_BUILD_LEGACY_DOOM)
 #include "E1M1Gameplay.h"
+#endif
 #include "DoomLiteGame.h"
 
 #ifdef __cplusplus
@@ -13,6 +15,7 @@ extern "C" {
  * units in Q8; facing spans a full turn in 256 steps (0 points along +X).
  * map_mode selects the overhead map when nonzero. This does not queue an LCD
  * transfer or change the player's/game's state. */
+#if defined(DOOM_LITE_RAY_TEST) || defined(SKYOS_BUILD_LEGACY_DOOM)
 void DoomLite_RenderFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
                           uint8_t facing, int map_mode);
 
@@ -23,6 +26,7 @@ void DoomLite_RenderFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
 void DoomLite_RenderGameFrame(uint8_t *pixels, int32_t x_q8, int32_t y_q8,
                               uint8_t facing, int map_mode,
                               const uint8_t door_open[E1M1_DOOR_COUNT]);
+#endif
 
 /* Game map: zoom=1 shows the full map, zoom=2 follows the player at 2x.
  * Uses view rows 0..100 above the shared classic bar, with large objectives. */

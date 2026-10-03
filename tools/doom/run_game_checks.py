@@ -51,12 +51,18 @@ def main() -> None:
     run("maps-reproduce", [python, "tools/doom/build_game_maps.py", "--check"])
     run("sprites-reproduce", [python, "tools/doom/build_game_sprites.py", "--check"])
     run("textures-reproduce", [python, "tools/doom/build_game_world.py", "--check"])
+    run("ui-reproduce", [python, "tools/doom/build_lite_ui.py", "--check"])
+    run("test-arena-reproduce", [python, "tools/doom/build_test_arena.py", "--check"])
     run("routes-audit", [python, "tools/doom/audit_game_routes.py", "--output", str(output / "routes.json")])
-    shared = [str(MODULE / "DoomLiteGame.c"), str(MODULE / "DoomMap.c")]
+    shared = [str(MODULE / "DoomLiteGame.c"), str(MODULE / "DoomMap.c"),
+              str(MODULE / "DoomTestMap.c")]
     tests = {
         "maps": (["tools/doom/test_game_map_data.c", str(MODULE / "DoomMap.c")], []),
         "sight": (["tools/doom/test_game_los.c", str(MODULE / "DoomMap.c")], []),
         "logic": (["tools/doom/check_lite_game.c", *shared], []),
+        "weapons": (["tools/doom/check_game_weapons.c", *shared], []),
+        "test-arena": (["tools/doom/check_test_arena.c", *shared], []),
+        "test-visuals": (["tools/doom/check_test_visuals.c", *shared], [str(output)]),
         "walking-routes": (["tools/doom/check_lite_routes.c", *shared], []),
         "exit": (["tools/doom/check_lite_exit.c", *shared], []),
         "ui": (["tools/doom/check_lite_ui.c", *shared], []),

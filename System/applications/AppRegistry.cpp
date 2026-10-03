@@ -8,8 +8,8 @@ void DoomPort_Start(void);
 void DoomPort_StartFlat(void);
 void DoomPort_StartFast(void);
 #endif
-void DoomLite_Start(void);
 void DoomGame_Start(void);
+void DoomTest_Start(void);
 extern const unsigned char gImage_khicas_ico[48 * 48];
 extern const unsigned char gImage_notes_ico[48 * 48];
 }
@@ -17,8 +17,8 @@ extern const unsigned char gImage_notes_ico[48 * 48];
 static const AppEntry apps[] = {
     {"KhiCAS", gImage_khicas_ico, StartKhiCAS},
     {"Notes", gImage_notes_ico, Notes_Start},
-    {"Lite", gImage_notes_ico, DoomLite_Start},
     {"Game", gImage_notes_ico, DoomGame_Start},
+    {"Test", gImage_notes_ico, DoomTest_Start},
 #ifdef SKYOS_BUILD_LEGACY_DOOM
     {"E1M1", gImage_notes_ico, DoomPort_Start},
     {"Flat", gImage_notes_ico, DoomPort_StartFlat},
