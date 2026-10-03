@@ -65,6 +65,7 @@ def ray_state(raw):
               "phase=task_allocation_error" in packet[0]]
     start = starts[-1].start() if starts else boots[0].start() if boots else packets[0].start()
     context, boot, perf, event, exits = {}, {}, None, None, []
+    completed_elapsed_ms = None
     for packet in packets:
         if packet.start() < start:
             continue
@@ -79,12 +80,19 @@ def ray_state(raw):
             if ("generation" in values and values.get("generation") != context.get("generation")):
                 perf = None
                 context = {}
+                completed_elapsed_ms = None
             if kind == "EVENT":
                 event = values.get("event")
                 if event in ("start", "cancel", "contrast", "reset"):
                     perf = None
+                    completed_elapsed_ms = None
             else:
                 perf = values
+                # Later DONE heartbeats include time spent viewing the result.
+                # Keep the first complete PERF duration, while raw stays current.
+                if (completed_elapsed_ms is None and values.get("phase") in (3, "done") and
+                        values.get("samples") == 32512 and "elapsed_ms" in values):
+                    completed_elapsed_ms = values["elapsed_ms"]
             context.update(values)
     phase = context.get("phase", boot.get("phase", "boot"))
     phase = {0: "preview", 1: "wait", 2: "trace", 3: "done"}.get(phase, phase)
@@ -106,7 +114,8 @@ def ray_state(raw):
         "samples": samples, "total_samples": total,
         "progress_percent": round(min(samples / total, 1) * 100, 2) if total else 0,
         "contrast": context.get("contrast", boot.get("contrast")),
-        "elapsed_ms": perf.get("elapsed_ms") if perf else None,
+        "elapsed_ms": completed_elapsed_ms if completed_elapsed_ms is not None else
+                      perf.get("elapsed_ms") if perf else None,
         **{key: perf.get(key) if perf else None for key in (
             "batch_samples", "trace_us", "preview_us", "lcd_us", "batch_max_us",
             "primary", "reflection", "shadow", "sphere_tests", "plane_tests",

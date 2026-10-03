@@ -396,6 +396,44 @@ class DashboardStateTest(unittest.TestCase):
         s = self.read(idle + boot + "RAY_EXIT phase=task_delete\n" + idle)
         self.assertEqual(s["memory_kb"], (57, 276))
 
+    def test_ray_completed_elapsed_freezes_first_full_perf_through_heartbeat_exit(self):
+        for phase in ("3", "done"):
+            with self.subTest(phase=phase):
+                log = ("RAY_BOOT phase=task_start pixels=32512\n"
+                       "RAY_PERF generation=7 phase=2 samples=32512 elapsed_ms=1000\n"
+                       "RAY_EVENT event=done generation=7 phase=3 samples=32512 pass=3\n"
+                       f"RAY_PERF generation=7 phase={phase} samples=32511 elapsed_ms=1100\n"
+                       f"RAY_PERF generation=7 phase={phase} samples=32512 elapsed_ms=1234 trace_us=900000\n"
+                       f"RAY_PERF generation=7 phase={phase} samples=32512 elapsed_ms=9999 trace_us=900000\n"
+                       f"RAY_PERF generation=7 phase={phase} samples=32512 elapsed_ms=10000 trace_us=900000\n"
+                       "RAY_EXIT phase=key\nRAY_EXIT phase=key_release\n"
+                       "RAY_EXIT phase=ui_resume_done\nRAY_EXIT phase=task_delete\n")
+                s = self.read(log)
+                self.assertEqual(s["ray"]["elapsed_ms"], 1234)
+                self.assertEqual(s["ray"]["raw"]["elapsed_ms"], 10000)
+                self.assertEqual(s["ray"]["trace_us"], 900000)
+                self.assertEqual(s["stage"], "Ray 已退出")
+
+    def test_ray_completed_elapsed_clears_on_generation_control_and_new_launch(self):
+        boot = "RAY_BOOT phase=task_start pixels=32512\n"
+        completed = (boot + "RAY_PERF generation=7 phase=3 samples=32512 elapsed_ms=1234\n"
+                     "RAY_PERF generation=7 phase=3 samples=32512 elapsed_ms=9999\n")
+        for event in ("start", "cancel", "reset", "contrast"):
+            with self.subTest(event=event):
+                log = completed + f"RAY_EVENT event={event} generation=7 phase=1 samples=0 pass=0\n"
+                self.assertIsNone(self.read(log)["ray"]["elapsed_ms"])
+                log += "RAY_PERF generation=7 phase=2 samples=128 elapsed_ms=44\n"
+                self.assertEqual(self.read(log)["ray"]["elapsed_ms"], 44)
+                log += ("RAY_PERF generation=7 phase=3 samples=32512 elapsed_ms=555\n"
+                        "RAY_PERF generation=7 phase=3 samples=32512 elapsed_ms=666\n")
+                self.assertEqual(self.read(log)["ray"]["elapsed_ms"], 555)
+        new_generation = completed + "RAY_PERF generation=8 phase=2 samples=128 elapsed_ms=45\n"
+        self.assertEqual(self.read(new_generation)["ray"]["elapsed_ms"], 45)
+        new_launch = completed + "RAY_EXIT phase=task_delete\n" + boot
+        self.assertIsNone(self.read(new_launch)["ray"]["elapsed_ms"])
+        new_launch += "RAY_PERF generation=7 phase=2 samples=128 elapsed_ms=88\n"
+        self.assertEqual(self.read(new_launch)["ray"]["elapsed_ms"], 88)
+
 
 if __name__ == "__main__":
     unittest.main()
