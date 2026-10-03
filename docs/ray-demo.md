@@ -164,8 +164,8 @@ The signed image is 5,949,676 bytes and passes the System/VM ROM limits. Its
 ELF reports 5,940,221 bytes of text, 4,948 bytes of data and 87,056 bytes of BSS.
 Actual compiler-option stack reports show a largest individual Ray function
 of 472 bytes and AA batch function of 96 bytes, excluding callees. The task
-still has 8 KiB; its peak is unmeasured. V3 orientation, AA appearance, added
-elapsed time and interrupt/exit response await hardware testing.
+still has 8 KiB; its peak is unmeasured. V3 hardware observations are recorded
+separately below.
 
 ## Logs and dashboard
 
@@ -285,6 +285,40 @@ post-exit task/heap telemetry was captured: V2 exit is user-reported, while V1
 has separate serial cleanup proof above. No System Panic text appeared in the
 captured portions. F1 reset, C1/C3, repeated launch/exit stability and task peak
 stack remain unverified on hardware.
+
+### Studio V3 hardware smoke test: 2026-10-04
+
+Firmware `33f077c` was flashed with eight matching transfer checksum samples;
+there was no independent NAND readback. The user reported all normal for
+orientation, the AA badge/image, exit and application-list response. Evidence
+is under `hp-39-gii/outputs/ray-controls-aa-2026-10-04/hardware/`;
+`ray-controls-aa-hardware-assessment.json` records the completed capture hash.
+
+One tilted C2 AA-enabled frame completed in 11,630 ms, including tracing,
+post-processing, yields and LCD. Trace batches accumulated 6,203.538 ms and
+LCD/barriers 1,564.802 ms. AA active work took 18.906 ms, scanning 32,512 pixels
+and changing 3,149, with a largest AA batch of 5.395 ms. AA start to AA done
+events spanned 213 ms; final done after LCD was 262 ms after AA start. These
+wall intervals include scheduling and log/display overhead, unlike `aa_us`.
+
+The recorded AA intermediate packet (88 rows) and completion (127 rows) had
+identical primary/reflection/refraction/shadow/test counts and `trace_us`.
+All thirteen preview/wait packets had zero ray and AA work. Three AA toggles
+cancelled active traces; pitch and roll changed in both directions. AA OFF
+traces were interrupted, so no completed matching OFF/ON speed comparison is
+available. The complete frame's primary count remained 32,512.
+
+Initial ready/start and a movement-release wait/start were 1,005 and 1,008 ms
+apart. Setting-toggle wait timestamps follow synchronous diagnostic output;
+their shorter printed intervals are not the controller's timing origin and
+cannot independently verify the one-second setting delay.
+
+No Panic or RAY_EXIT text was captured. Exit is user-reported normal; serial
+task removal/heap return, repeated launches, F1 reset, C1/C3, hardware angle
+limits/full roll and peak stack remain unverified in this test. The dashboard
+source supports the new metrics, but automatic approval blocked restarting
+its running backend with `blocked by policy`; new raw telemetry remains in
+the separate V3 log. The existing dashboard service was preserved.
 
 ## References
 
